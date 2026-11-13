@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Утренний Темп-Будильник PRO+</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --bg:#121824; --card:#1e2638; --text:#f8fafc; --accent:#22c55e; }
+    * { box-sizing:border-box; margin:0; padding:0;
+        font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+        -webkit-tap-highlight-color:transparent; }
+    body { background:var(--bg); color:var(--text); min-height:100vh; padding:12px;
+           transition:background .45s ease; overflow-x:hidden; }
+    body.state-ok { background:#0f291e !important; }
+    body.state-warn { background:#3b2a0a !important; }
+    body.state-over { animation:pulseRed 1.2s infinite alternate; }
+    @keyframes pulseRed { from{background:#3b0d0d} to{background:#691010} }
+    .tabular-nums { font-variant-numeric:tabular-nums; }
+    .btn-giant { width:100%; min-height:136px;
+      background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%); color:#052e16;
+      border:none; border-radius:18px; font-size:28px; font-weight:900; cursor:pointer;
+      margin-top:8px; box-shadow:0 8px 25px rgba(34,197,94,.35);
+      transition:transform .12s ease, box-shadow .2s ease;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      gap:4px; user-select:none; }
+    .btn-giant:active { transform:scale(.98); }
+    .btn-giant.paused { background:linear-gradient(135deg,#eab308 0%,#ca8a04 100%); color:#1c1917; }
+    @keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(244,63,94,.7)} 50%{box-shadow:0 0 0 10px rgba(244,63,94,0)} }
+    .mic-active { animation:micPulse 1.3s infinite; background:#e11d48 !important; border-color:#fda4af !important; }
+    .row-btn { min-width:44px; min-height:44px; }
+    .task-row { touch-action:pan-y; user-select:none; transition:transform .15s ease, background .15s ease, opacity .15s ease; }
+    .task-row.dragging {
+      position:relative; z-index:30;
+      background:#1e3a5f !important;
+      border:1px solid #38bdf8;
+      border-radius:12px;
+      transform:scale(1.02);
+      box-shadow:0 12px 28px rgba(0,0,0,.55);
+      opacity:.96;
+    }
+    .task-row.drop-target-top { border-top:2px solid #38bdf8; }
+    .task-row.drop-target-bottom { border-bottom:2px solid #38bdf8; }
+  </style>
+</head>
+<body class="pb-16">
+
+  <div id="toastBox" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md pointer-events-none flex flex-col gap-2"></div>
+
+  <div class="max-w-lg mx-auto space-y-3">
+
+    <!-- 1. ВЕРХНЯЯ ПАНЕЛЬ -->
+    <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-2.5">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5">
+          <div class="text-xs text-slate-400 font-medium">Сейчас</div>
+          <div id="clockNow" class="text-2xl sm:text-3xl font-extrabold text-white tabular-nums tracking-tight">00:00:00</div>
+        </div>
+        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5">
+          <div class="text-xs text-slate-400 font-medium">Финиш всех дел</div>
+          <div id="clockForecast" class="text-2xl sm:text-3xl font-extrabold text-sky-400 tabular-nums tracking-tight">00:00:00</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-700/80 text-sm">
+        <label class="flex items-center gap-2 font-semibold text-slate-200 cursor-pointer">
+          <input type="checkbox" id="useDeadline" checked onchange="saveSettings();render()" class="w-4 h-4 accent-emerald-500 rounded cursor-pointer" />
+          <span>Дедлайн выхода:</span>
+        </label>
+        <div class="flex items-center gap-2">
+          <input type="time" id="deadlineTime" value="07:45" onchange="saveSettings();render()"
+            class="bg-slate-950 text-white border border-slate-600 rounded-lg px-2.5 py-1 text-sm font-bold tabular-nums focus:outline-none focus:border-sky-400" />
+          <span id="deadlineDiff" class="font-extrabold text-xs sm:text-sm px-2.5 py-1 rounded-lg bg-slate-900 tabular-nums">Запас: -- мин</span>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs">
+        <label class="flex items-center gap-2 font-semibold text-amber-300 cursor-pointer">
+          <input type="checkbox" id="autoCompressToggle" checked onchange="saveSettings()" class="w-4 h-4 accent-amber-400 rounded cursor-pointer" />
+          <span>⚡ Автоужатие под дедлайн</span>
+        </label>
+        <div class="flex items-center gap-1.5">
+          <button type="button" onclick="compressToDeadline(true)"
+            class="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs active:scale-95 transition">Сжать под дедлайн</button>
+          <button type="button" onclick="testVoiceAlert()"
+            class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold text-xs active:scale-95 transition">🔊 Тест голоса</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. ТАЙМЕР -->
+    <div class="bg-[#1e2638]/90 border border-slate-600/80 rounded-2xl p-4 text-center shadow-2xl space-y-2">
+      <div class="flex flex-wrap items-center justify-center gap-2">
+        <div id="keepAliveBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400">
+          <span>🔓 Ожидание старта</span>
+        </div>
+        <div id="savedBank" class="hidden px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-900/90 border border-emerald-500/60 text-emerald-200 tabular-nums">В запасе: +00:00</div>
+      </div>
+
+      <div id="stepCounter" class="text-xs font-bold uppercase tracking-wider text-slate-400 pt-1">Нажмите «Старт» для начала</div>
+      <div id="currentTaskName" class="text-2xl sm:text-3xl font-extrabold text-white leading-tight">Готов к утру</div>
+      <div id="timerDisplay" class="text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white">00:00</div>
+
+      <div class="relative w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-700 my-2">
+        <div id="stepProgressBar" class="h-full bg-emerald-500 transition-all duration-300" style="width:100%"></div>
+        <div class="absolute top-0 bottom-0 left-[50%] w-0.5 bg-sky-300/80" title="Чекпоинт 50%"></div>
+        <div class="absolute top-0 bottom-0 left-[20%] w-0.5 bg-amber-400" title="Предупреждение 20%"></div>
+      </div>
+      <div class="flex justify-between text-[10px] text-slate-400 font-semibold px-1">
+        <span>0%</span><span class="text-amber-300">20% (Сигнал)</span>
+        <span class="text-sky-300">50% (Экватор)</span><span>100%</span>
+      </div>
+
+      <button class="btn-giant" id="mainBtn" type="button" onclick="handleMainBtn()">
+        <span id="mainBtnTitle">▶ СТАРТ</span>
+        <span id="mainBtnSub" class="text-xs font-extrabold bg-black/15 text-emerald-950 px-3 py-1 rounded-full">Запустить утреннюю цепочку</span>
+      </button>
+
+      <div class="grid grid-cols-4 gap-2 pt-2">
+        <button type="button" onclick="togglePause()" id="pauseBtn"
+          class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-white text-sm font-bold active:scale-95 transition">⏸</button>
+        <button type="button" onclick="skipStep()"
+          class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-white text-sm font-bold active:scale-95 transition">⏭</button>
+        <button type="button" onclick="addSavedMinute()"
+          class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-emerald-300 text-sm font-bold active:scale-95 transition">+1 мин</button>
+        <button type="button" onclick="confirmReset()"
+          class="row-btn py-3 px-1 rounded-xl border border-rose-500/40 bg-rose-950/70 hover:bg-rose-900 text-rose-200 text-sm font-bold active:scale-95 transition">↺</button>
+      </div>
+    </div>
+
+    <!-- 3. СВОДКА -->
+    <div id="summaryCard" class="hidden bg-[#1e2638] border-2 border-emerald-500 rounded-2xl p-4 shadow-2xl space-y-3">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <h2 class="text-base sm:text-lg font-extrabold text-white">📊 Сводка утра: План / Факт</h2>
+        <span id="summaryTotalBadge" class="text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600/50 tabular-nums"></span>
+      </div>
+      <div id="summaryList" class="space-y-1.5 text-xs sm:text-sm"></div>
+      <div id="summaryTotalsRow" class="pt-2 border-t border-slate-700 flex justify-between items-center text-xs sm:text-sm font-bold text-slate-200 tabular-nums"></div>
+      <button type="button" onclick="updateTemplateFromActual()"
+        class="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg active:scale-95 transition">💾 Обновить шаблон по факту</button>
+    </div>
+
+    <!-- 4. ШАБЛОНЫ И ГОЛОС -->
+    <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-2.5">
+      <div class="text-xs font-extrabold uppercase tracking-wider text-slate-300">Готовые шаблоны:</div>
+      <div class="grid grid-cols-3 gap-2">
+        <button type="button" onclick="loadTemplate('standard')" class="py-2.5 px-2 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-bold active:scale-95 transition">Стандарт</button>
+        <button type="button" onclick="loadTemplate('fast')" class="py-2.5 px-2 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-bold active:scale-95 transition">Быстрый сбор</button>
+        <button type="button" onclick="loadTemplate('workout')" class="py-2.5 px-2 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-bold active:scale-95 transition">С тренировкой</button>
+      </div>
+      <button type="button" id="voiceCmdBtn" onclick="startVoiceCommand()"
+        class="w-full py-3 px-3 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-extrabold text-sm shadow active:scale-95 transition flex items-center justify-center gap-2">
+        <span>🎙 Сказать команду («Готово», «Добавь третьим душ 10», «Удали»)</span>
+      </button>
+      <div id="voiceStatus" class="text-xs text-slate-300 text-center min-h-[16px]"></div>
+    </div>
+
+    <!-- 5. РЕДАКТОР ЦЕПОЧКИ -->
+    <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-2.5">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm font-extrabold text-white">Цепочка утренних дел:</span>
+        <span id="chainTotalMin" class="text-xs font-bold text-sky-400 tabular-nums"></span>
+      </div>
+      <div class="text-[11px] text-slate-400">Зажмите пункт пальцем и перетащите, чтобы поменять порядок.</div>
+      <div id="tasksContainer" class="divide-y divide-slate-700/70"></div>
+      <div class="flex gap-2 pt-2">
+        <input type="text" id="newTaskTitle" placeholder="Название дела..."
+          class="flex-1 bg-slate-950 text-white border border-slate-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" />
+        <input type="number" id="newTaskMin" placeholder="Мин" value="5" min="0.5" step="0.5"
+          class="w-20 bg-slate-950 text-white border border-slate-600 rounded-xl px-2.5 py-2 text-sm font-bold text-center tabular-nums" />
+        <button type="button" onclick="addTask()"
+          class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-base active:scale-95 transition">＋</button>
+      </div>
+    </div>
+
+  </div>
+
+  <audio id="silentHtmlAudio" loop playsinline class="hidden"></audio>
+
+  <script>
+    // ============ 1. ДАННЫЕ И СОСТОЯНИЕ ============
+    const templates = {
+      standard: [ {title:'Вода с лимоном',min:2},{title:'Зарядка',min:15},{title:'Душ',min:10},{title:'Завтрак',min:15} ],
+      fast: [ {title:'Вода',min:1},{title:'Быстрый душ',min:5},{title:'Кофе / перекус',min:8} ],
+      workout: [ {title:'Вода',min:2},{title:'Разминка',min:10},{title:'Тренировка',min:30},{title:'Душ',min:15},{title:'Завтрак',min:15} ]
+    };
+
+    let rawStoredTasks = JSON.parse(localStorage.getItem('m_tasks')) || templates.standard;
+    let tasks = rawStoredTasks.map(t => ({
+      title: t.title,
+      min: Number(t.min) || 5,
+      originalMin: t.originalMin ? Number(t.originalMin) : Number(t.min) || 5,
+      compressedSec: null
+    }));
+
+    let activeIdx = -1, stepDurationSec = 0, stepPlannedSec = 0, stepElapsedSec = 0, savedSec = 0;
+    let paused = false;
+    let warned50 = false, warned20 = false;
+    let routineStats = [];
+    let wakeLock = null, audioCtx = null, keepAliveOsc = null, keepAliveGain = null, keepAliveActive = false, silentWavUrl = null;
+
+    // Состояние перетаскивания пальцем
+    let dragState = {
+      timerId: null,
+      startX: 0,
+      startY: 0,
+      fromIdx: -1,
+      toIdx: -1,
+      active: false
+    };
+
+    function vibrate(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){} }
+
+    function saveTasks() {
+      localStorage.setItem('m_tasks', JSON.stringify(tasks.map(t => ({ title:t.title, min:t.min }))));
+    }
+    function saveSettings() {
+      localStorage.setItem('m_auto_compress', JSON.stringify(document.getElementById('autoCompressToggle').checked));
+      localStorage.setItem('m_use_deadline', JSON.stringify(document.getElementById('useDeadline').checked));
+      localStorage.setItem('m_deadline_time', document.getElementById('deadlineTime').value);
+    }
+    (function loadSettings() {
+      const a = localStorage.getItem('m_auto_compress');
+      if (a !== null) document.getElementById('autoCompressToggle').checked = JSON.parse(a);
+      const d = localStorage.getItem('m_use_deadline');
+      if (d !== null) document.getElementById('useDeadline').checked = JSON.parse(d);
+      const t = localStorage.getItem('m_deadline_time');
+      if (t) document.getElementById('deadlineTime').value = t;
+    })();
+
+    function showToast(message) {
+      const box = document.getElementById('toastBox');
+      const el = document.createElement('div');
+      el.className = 'bg-slate-900/95 border border-sky-500/60 text-white px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold shadow-2xl transition-opacity duration-300';
+      el.textContent = message;
+      box.appendChild(el);
+      setTimeout(() => { el.style.opacity='0'; setTimeout(()=>el.remove(),300); }, 3200);
+    }
+
+    // ============ 2. KEEP-ALIVE ============
+    function createSilentWavBlobUrl() {
+      if (silentWavUrl) return silentWavUrl;
+      const sampleRate = 8000, numSamples = sampleRate;
+      const buffer = new ArrayBuffer(44 + numSamples * 2);
+      const view = new DataView(buffer);
+      const writeStr = (o,s) => { for (let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+      writeStr(0,'RIFF'); view.setUint32(4,36+numSamples*2,true); writeStr(8,'WAVE');
+      writeStr(12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true);
+      view.setUint32(24,sampleRate,true); view.setUint32(28,sampleRate*2,true);
+      view.setUint16(32,2,true); view.setUint16(34,16,true);
+      writeStr(36,'data'); view.setUint32(40,numSamples*2,true);
+      silentWavUrl = URL.createObjectURL(new Blob([buffer], {type:'audio/wav'}));
+      return silentWavUrl;
+    }
+    async function enableKeepAlive() {
+      try {
+        if ('wakeLock' in navigator && !wakeLock) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock=null; updateKeepAliveBadge(); });
+        }
+      } catch(e){}
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+        if (audioCtx.state==='suspended') await audioCtx.resume();
+        if (!keepAliveOsc) {
+          keepAliveOsc = audioCtx.createOscillator();
+          keepAliveGain = audioCtx.createGain();
+          keepAliveOsc.type='sine';
+          keepAliveOsc.frequency.setValueAtTime(1, audioCtx.currentTime);
+          keepAliveGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+          keepAliveOsc.connect(keepAliveGain); keepAliveGain.connect(audioCtx.destination);
+          keepAliveOsc.start();
+        }
+      } catch(e){}
+      try {
+        const audioEl = document.getElementById('silentHtmlAudio');
+        if (!audioEl.src) audioEl.src = createSilentWavBlobUrl();
+        audioEl.volume = 0.01;
+        await audioEl.play();
+      } catch(e){}
+      keepAliveActive = true;
+      updateKeepAliveBadge();
+    }
+    function disableKeepAlive() {
+      keepAliveActive = false;
+      try { if (wakeLock) { wakeLock.release(); wakeLock=null; } } catch(e){}
+      try { if (keepAliveOsc) { keepAliveOsc.stop(); keepAliveOsc.disconnect(); keepAliveOsc=null; } } catch(e){}
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
+      updateKeepAliveBadge();
+    }
+    function updateKeepAliveBadge() {
+      const badge = document.getElementById('keepAliveBadge');
+      if (keepAliveActive && activeIdx >= 0 && activeIdx < tasks.length) {
+        badge.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300';
+        badge.innerHTML = '<span>🔒 Экран и аудиоканал удерживаются</span>';
+      } else {
+        badge.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400';
+        badge.innerHTML = '<span>🔓 Ожидание старта</span>';
+      }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState==='visible' && activeIdx>=0 && activeIdx<tasks.length) enableKeepAlive();
+    });
+
+    // ============ 3. ЗВУК И РЕЧЬ ============
+    function playBeep(freq=600, dur=0.12, count=1) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+        if (audioCtx.state==='suspended') audioCtx.resume();
+        for (let i=0;i<count;i++) {
+          const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.18, audioCtx.currentTime + i*0.2);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i*0.2 + dur);
+          osc.connect(gain); gain.connect(audioCtx.destination);
+          osc.start(audioCtx.currentTime + i*0.2);
+          osc.stop(audioCtx.currentTime + i*0.2 + dur);
+        }
+      } catch(e){}
+    }
+    function speakRu(text) {
+      if (!('speechSynthesis' in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang='ru-RU'; u.rate=1.05;
+        window.speechSynthesis.speak(u);
+      } catch(e){}
+    }
+    function formatRussianDurationVoice(sec) {
+      const s = Math.round(sec);
+      if (s < 60) return `${s} секунд`;
+      const m = Math.floor(s/60), remS = s%60;
+      if (remS === 0) return `${m} минут`;
+      return `${m} минут ${remS} секунд`;
+    }
+    function testVoiceAlert() {
+      enableKeepAlive();
+      playBeep(740,0.12,2);
+      const sampleTitle = tasks[0] ? tasks[0].title : 'Зарядка';
+      const msg = `Проверка звука. Половина времени. Осталось 5 минут на ${sampleTitle}. Идем по графику.`;
+      speakRu(msg);
+      showToast('🔊 ' + msg);
+    }
+
+    // ============ 4. ДЕДЛАЙН И АВТОУЖАТИЕ ============
+    function getStepTargetSec(idx) {
+      if (!tasks[idx]) return 0;
+      return tasks[idx].compressedSec != null ? tasks[idx].compressedSec : Math.round(tasks[idx].min*60);
+    }
+    function getDeadlineDate(now = new Date()) {
+      const val = document.getElementById('deadlineTime').value || '07:45';
+      const [dh,dm] = val.split(':').map(Number);
+      const dl = new Date(now); dl.setHours(dh,dm,0,0);
+      return dl;
+    }
+    function getRemainingTotalSec(fromIdx = activeIdx) {
+      if (tasks.length === 0) return 0;
+      if (fromIdx === -1 || fromIdx >= tasks.length)
+        return tasks.reduce((acc,_,i)=>acc+getStepTargetSec(i),0);
+      let total = Math.max(0, stepDurationSec - stepElapsedSec);
+      for (let i=fromIdx+1;i<tasks.length;i++) total += getStepTargetSec(i);
+      return total;
+    }
+    function compressToDeadline(isManual=false, targetStartIdx=null) {
+      const useDl = document.getElementById('useDeadline').checked;
+      if (!useDl && !isManual) return { compressed:false, lateMin:0 };
+      const now = new Date();
+      const dlDate = getDeadlineDate(now);
+      const availSec = Math.floor((dlDate-now)/1000);
+      const startIdx = targetStartIdx !== null ? targetStartIdx
+        : (activeIdx>=0 && activeIdx<tasks.length ? activeIdx : 0);
+      const remCount = tasks.length - startIdx;
+      if (remCount <= 0) return { compressed:false, lateMin:0 };
+
+      let currentUncompressedRemSec = 0;
+      for (let i=startIdx;i<tasks.length;i++) {
+        if (i===activeIdx && targetStartIdx===null)
+          currentUncompressedRemSec += Math.max(30, stepDurationSec - stepElapsedSec);
+        else currentUncompressedRemSec += getStepTargetSec(i);
+      }
+      const lateSec = currentUncompressedRemSec - availSec;
+      const lateMin = Math.max(1, Math.round(lateSec/60));
+      if (lateSec <= 0) {
+        if (isManual) showToast('✅ Вы уже укладываетесь до дедлайна с запасом!');
+        return { compressed:false, lateMin:0 };
+      }
+      const minPossibleSec = remCount * 30;
+      const targetBudgetSec = Math.max(minPossibleSec, availSec);
+      const ratio = targetBudgetSec / currentUncompressedRemSec;
+      for (let i=startIdx;i<tasks.length;i++) {
+        if (tasks[i].originalMin == null) tasks[i].originalMin = tasks[i].min;
+        const baseSec = (i===activeIdx && targetStartIdx===null)
+          ? Math.max(30, stepDurationSec - stepElapsedSec) : getStepTargetSec(i);
+        const newSec = Math.max(30, Math.round(baseSec*ratio));
+        tasks[i].compressedSec = newSec;
+        if (i===activeIdx && targetStartIdx===null) stepDurationSec = stepElapsedSec + newSec;
+      }
+      render();
+      if (isManual) {
+        playBeep(680,0.1,2);
+        speakRu(`Отставание ${lateMin} минут, остаток сжат под дедлайн.`);
+        showToast(`⚡ Этапы сжаты под дедлайн (отставание было ${lateMin} мин)`);
+      }
+      return { compressed:true, lateMin };
+    }
+
+    // ============ 5. УПРАВЛЕНИЕ ШАГАМИ ============
+    function handleMainBtn() {
+      vibrate(30);
+      if (activeIdx === -1 || activeIdx >= tasks.length) {
+        if (tasks.length === 0) { showToast('⚠️ Добавьте хотя бы одну задачу!'); return; }
+        savedSec = 0; routineStats = []; paused = false;
+        tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; });
+        document.getElementById('summaryCard').classList.add('hidden');
+        enableKeepAlive();
+        startStep(0);
+      } else {
+        const diff = stepDurationSec - stepElapsedSec;
+        if (diff > 0) savedSec += diff;
+        routineStats.push({ title:tasks[activeIdx].title, plannedSec:stepPlannedSec,
+          actualSec:Math.max(1,stepElapsedSec), skipped:false });
+        if (activeIdx+1 < tasks.length) startStep(activeIdx+1);
+        else finishRoutine();
+      }
+    }
+    function startStep(idx) {
+      activeIdx = idx; stepElapsedSec = 0; warned50 = false; warned20 = false; paused = false;
+      stepPlannedSec = Math.round((tasks[idx].originalMin || tasks[idx].min)*60);
+      let compressionInfo = { compressed:false, lateMin:0 };
+      const useDl = document.getElementById('useDeadline').checked;
+      const autoComp = document.getElementById('autoCompressToggle').checked;
+      if (useDl && autoComp) compressionInfo = compressToDeadline(false, idx);
+      stepDurationSec = getStepTargetSec(idx);
+      enableKeepAlive();
+      playBeep(700,0.1,1);
+      const durText = formatRussianDurationVoice(stepDurationSec);
+      let speech = `Дальше: ${tasks[idx].title}, ${durText}.`;
+      if (useDl) {
+        if (compressionInfo.compressed) {
+          speech += ` Отставание ${compressionInfo.lateMin} минут, остаток сжат под дедлайн.`;
+        } else {
+          const now = new Date();
+          const dlDate = getDeadlineDate(now);
+          const remTotal = getRemainingTotalSec(idx);
+          const forecast = new Date(now.getTime()+remTotal*1000);
+          const diffMin = Math.round((dlDate-forecast)/60000);
+          if (diffMin > 1) speech += ` В запасе ${diffMin} минут.`;
+          else if (diffMin >= -1) speech += ` Идем по графику.`;
+          else speech += ` Отставание ${Math.abs(diffMin)} минут.`;
+        }
+      }
+      speakRu(speech);
+      render();
+    }
+    function togglePause() {
+      if (activeIdx < 0 || activeIdx >= tasks.length) return;
+      paused = !paused;
+      if (paused) { speakRu('Пауза'); showToast('⏸ Пауза'); }
+      else { speakRu('Продолжаем'); showToast('▶ Продолжаем'); }
+      render();
+    }
+    function skipStep() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) return;
+      vibrate(30);
+      routineStats.push({ title:tasks[activeIdx].title,
+        plannedSec:stepPlannedSec || Math.round(tasks[activeIdx].min*60),
+        actualSec:stepElapsedSec, skipped:true });
+      if (activeIdx+1 < tasks.length) startStep(activeIdx+1);
+      else finishRoutine();
+    }
+    function addSavedMinute() {
+      if (activeIdx >= 0 && activeIdx < tasks.length) {
+        if (savedSec >= 60) { savedSec -= 60; stepDurationSec += 60; showToast('⏱ +1 минута добавлена из запаса'); }
+        else { stepDurationSec += 60; showToast('⏱ +1 минута добавлена к текущему шагу'); }
+        render();
+      }
+    }
+    function confirmReset() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) { resetRoutine(); return; }
+      if (confirm('Сбросить текущее утро? Прогресс шагов будет потерян.')) resetRoutine();
+    }
+    function finishRoutine() {
+      activeIdx = tasks.length;
+      document.body.className = 'pb-16';
+      playBeep(880,0.15,3);
+      vibrate([100,50,100]);
+      speakRu('Отличная работа! Все утренние ритуалы завершены.');
+      disableKeepAlive();
+      renderSummaryCard();
+      render();
+    }
+    function resetRoutine() {
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false;
+      tasks.forEach(t => { t.compressedSec=null; });
+      document.body.className = 'pb-16';
+      document.getElementById('summaryCard').classList.add('hidden');
+      disableKeepAlive();
+      render();
+    }
+
+    // ============ 6. СВОДКА ============
+    function renderSummaryCard() {
+      const card = document.getElementById('summaryCard');
+      const listEl = document.getElementById('summaryList');
+      const badgeEl = document.getElementById('summaryTotalBadge');
+      const totalsEl = document.getElementById('summaryTotalsRow');
+      if (!routineStats.length) return;
+      card.classList.remove('hidden');
+      let totalPlanned = 0, totalActual = 0;
+      listEl.innerHTML = routineStats.map((item,i) => {
+        totalPlanned += item.plannedSec;
+        if (!item.skipped) totalActual += item.actualSec;
+        let diffBadge = '';
+        if (item.skipped) diffBadge = `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-bold">Пропущено</span>`;
+        else {
+          const diff = item.actualSec - item.plannedSec;
+          diffBadge = diff <= 0
+            ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 font-extrabold">-${fmtSec(Math.abs(diff))}</span>`
+            : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 font-extrabold">+${fmtSec(diff)}</span>`;
+        }
+        return `<div class="flex items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl">
+          <span class="font-bold text-slate-200 truncate">${i+1}. ${item.title}</span>
+          <div class="flex items-center gap-2 flex-shrink-0 tabular-nums">
+            <span class="text-slate-400">План: ${fmtSec(item.plannedSec)}</span>
+            <span class="text-white font-bold">Факт: ${item.skipped ? '—' : fmtSec(item.actualSec)}</span>
+            ${diffBadge}
+          </div></div>`;
+      }).join('');
+      const totalDiff = totalActual - totalPlanned;
+      badgeEl.textContent = totalDiff <= 0 ? `Быстрее плана на ${fmtSec(Math.abs(totalDiff))}`
+        : `Дольше плана на +${fmtSec(totalDiff)}`;
+      totalsEl.innerHTML = `
+        <span>Итого по всем задачам:</span>
+        <span>План ${fmtSec(totalPlanned)} / Факт <strong class="text-sky-400">${fmtSec(totalActual)}</strong></span>
+      `;
+    }
+
+    function updateTemplateFromActual() {
+      if (!routineStats.length) return;
+      routineStats.forEach((stat, i) => {
+        if (tasks[i] && !stat.skipped && stat.actualSec > 0) {
+          const roundedMin = Math.max(0.5, Math.round((stat.actualSec / 60) * 2) / 2);
+          tasks[i].min = roundedMin;
+          tasks[i].originalMin = roundedMin;
+          tasks[i].compressedSec = null;
+        }
+      });
+      saveTasks();
+      render();
+      playBeep(780, 0.12, 2);
+      speakRu('Шаблон обновлен по фактическому времени');
+      showToast('💾 Фактическая длительность задач сохранена как новый шаблон!');
+    }
+
+    // ============ 7. ШАБЛОНЫ, РЕДАКТОР, ПЕРЕМЕЩЕНИЕ ПАЛЬЦЕМ, ГОЛОС ============
+    function loadTemplate(key) {
+      if (templates[key]) {
+        tasks = templates[key].map(t => ({ title:t.title, min:t.min, originalMin:t.min, compressedSec:null }));
+        saveTasks();
+        resetRoutine();
+        speakRu('Шаблон загружен');
+        showToast('📂 Шаблон загружен');
+      }
+    }
+
+    function insertTaskAt(pos1Based, title, min) {
+      const clampedPos = Math.max(1, Math.min(tasks.length + 1, pos1Based));
+      const insertIdx = clampedPos - 1;
+      const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
+      tasks.splice(insertIdx, 0, { title:capTitle, min, originalMin:min, compressedSec:null });
+
+      if (activeIdx >= 0 && insertIdx <= activeIdx) {
+        activeIdx++;
+      }
+
+      saveTasks();
+      render();
+      speakRu(`Добавлено ${clampedPos}-м пунктом: ${capTitle}, ${min} минут`);
+      showToast(`＋ ${clampedPos}-й пункт: ${capTitle} (${min} мин)`);
+    }
+
+    function addTask() {
+      const t = document.getElementById('newTaskTitle').value.trim();
+      const m = parseFloat(document.getElementById('newTaskMin').value) || 5;
+      if (!t) return;
+      tasks.push({ title:t, min:m, originalMin:m, compressedSec:null });
+      document.getElementById('newTaskTitle').value = '';
+      saveTasks();
+      render();
+    }
+
+    function removeTask(i) {
+      if (activeIdx >= 0) {
+        if (i < activeIdx) activeIdx--;
+        else if (i === activeIdx) {
+          if (activeIdx >= tasks.length - 1) activeIdx = -1;
+        }
+      }
+      tasks.splice(i, 1);
+      saveTasks();
+      render();
+    }
+
+    function moveTask(fromIdx, toIdx) {
+      if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= tasks.length || toIdx >= tasks.length) return;
+      const [moved] = tasks.splice(fromIdx, 1);
+      tasks.splice(toIdx, 0, moved);
+
+      if (activeIdx >= 0 && activeIdx < tasks.length) {
+        if (activeIdx === fromIdx) {
+          activeIdx = toIdx;
+        } else if (fromIdx < activeIdx && toIdx >= activeIdx) {
+          activeIdx--;
+        } else if (fromIdx > activeIdx && toIdx <= activeIdx) {
+          activeIdx++;
+        }
+      }
+
+      saveTasks();
+      render();
+      vibrate(25);
+      showToast(`↕ «${moved.title}» перемещён на ${toIdx + 1}-е место`);
+    }
+
+    function startVoiceCommand() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const statusEl = document.getElementById('voiceStatus');
+      const btnEl = document.getElementById('voiceCmdBtn');
+      if (!SpeechRecognition) {
+        statusEl.textContent = 'Голосовой ввод не поддерживается в этом окне. Откройте в Google Chrome.';
+        showToast('🎙 Откройте приложение в браузере Google Chrome для доступа к микрофону');
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'ru-RU';
+      recognition.interimResults = false;
+      btnEl.classList.add('mic-active');
+      statusEl.textContent = '🎙 Слушаю команду...';
+      recognition.onresult = function(event) {
+        const text = event.results[0][0].transcript.toLowerCase();
+        statusEl.textContent = `Распознано: «${text}»`;
+        parseVoiceCommand(text);
+      };
+      recognition.onerror = function() {
+        statusEl.textContent = 'Не удалось распознать речь или микрофон заблокирован';
+      };
+      recognition.onend = function() {
+        btnEl.classList.remove('mic-active');
+        setTimeout(() => { statusEl.textContent = ''; }, 3500);
+      };
+      recognition.start();
+    }
+
+    function parsePositionToken(token) {
+      if (!token) return null;
+      const clean = token.replace(/[-–]?(м|ым|им|ом|ем|му|ому|ого|го|й|я|е|у|ю|ы|и|а|о|е|м|ом|ым|им|ым)$/i, '').trim();
+      const map = {
+        'перв': 1, '1': 1, 'один': 1,
+        'втор': 2, '2': 2, 'два': 2,
+        'трет': 3, '3': 3, 'три': 3,
+        'четверт': 4, 'четвёрт': 4, '4': 4, 'четыр': 4,
+        'пят': 5, '5': 5,
+        'шест': 6, '6': 6,
+        'седьм': 7, '7': 7, 'сем': 7,
+        'восьм': 8, '8': 8, 'восем': 8,
+        'девят': 9, '9': 9,
+        'десят': 10, '10': 10
+      };
+      if (map[clean]) return map[clean];
+      const num = parseInt(clean, 10);
+      return !isNaN(num) && num >= 1 ? num : null;
+    }
+
+    function parseVoiceCommand(text) {
+      const normalized = text.replace(/ё/g, 'е').trim();
+
+      if (normalized.includes('готово') || normalized.includes('дальше') || normalized.includes('следующий')) {
+        handleMainBtn();
+      } else if (normalized.includes('старт') || normalized.includes('начать')) {
+        if (activeIdx === -1 || activeIdx >= tasks.length) handleMainBtn();
+      } else if (normalized.includes('пауза')) {
+        if (!paused) togglePause();
+      } else if (normalized.includes('продолжай') || normalized.includes('продолжить')) {
+        if (paused) togglePause();
+      } else if (normalized.includes('сброс')) {
+        resetRoutine();
+      } else if (normalized.includes('сжать') || normalized.includes('дедлайн')) {
+        compressToDeadline(true);
+      } else if (normalized.includes('добавь')) {
+        // Примеры: «добавь третьим пунктом душ 10», «добавь 3 пунктом душ на 10 минут», «добавь душ 10»
+        const posMatch = normalized.match(/добавь\s+([а-яa-z0-9\-]+)\s+(?:пунктом|местом|делом|шагом)?\s*(.+)$/i);
+        if (posMatch) {
+          const posToken = posMatch[1];
+          const rest = posMatch[2].trim();
+          const parsedPos = (posToken === 'последним' || posToken === 'последний')
+            ? tasks.length + 1
+            : parsePositionToken(posToken);
+
+          if (parsedPos !== null) {
+            const minMatch = rest.match(/(?:на\s+)?(\d+(?:[.,]\d+)?)\s*(?:минут|мин|м)?\s*$/i);
+            let min = 5;
+            let title = rest;
+            if (minMatch) {
+              min = parseFloat(minMatch[1].replace(',', '.')) || 5;
+              title = rest.slice(0, minMatch.index).replace(/\s+(?:на|в|по)\s*$/i, '').trim();
+            }
+            if (title) {
+              insertTaskAt(parsedPos, title, min);
+              return;
+            }
+          }
+        }
+
+        const simpleMatch = normalized.match(/добавь\s+(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?))?\s*(?:минут|мин)?$/i);
+        if (simpleMatch) {
+          const title = simpleMatch[1].trim();
+          const min = simpleMatch[2] ? (parseFloat(simpleMatch[2].replace(',', '.')) || 5) : 5;
+          const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
+          tasks.push({ title:capTitle, min, originalMin:min, compressedSec:null });
+          saveTasks();
+          render();
+          speakRu(`Добавлено ${capTitle}, ${min} минут`);
+          showToast(`＋ Добавлено: ${capTitle} (${min} мин)`);
+        }
+      } else if (normalized.includes('удали')) {
+        if (tasks.length > 0) {
+          const removed = tasks.pop();
+          saveTasks();
+          render();
+          speakRu(`Удалено ${removed.title}`);
+          showToast(`🗑 Удалено: ${removed.title}`);
+        }
+      }
+    }
+
+    // ============ 8. ОТРИСОВКА И ТАЙМЕР ============
+    function fmtSec(sec) {
+      const s = Math.floor(Math.abs(sec));
+      const m = Math.floor(s / 60), r = s % 60;
+      return (sec < 0 ? '+' : '') + String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0');
+    }
+
+    function clearDragIndicators() {
+      const rows = document.querySelectorAll('#tasksContainer .task-row');
+      rows.forEach(r => {
+        r.classList.remove('dragging', 'drop-target-top', 'drop-target-bottom');
+      });
+    }
+
+    function highlightDropTarget(toIdx) {
+      const rows = document.querySelectorAll('#tasksContainer .task-row');
+      rows.forEach((r, idx) => {
+        r.classList.remove('drop-target-top', 'drop-target-bottom');
+        if (idx === toIdx && idx !== dragState.fromIdx) {
+          if (toIdx < dragState.fromIdx) r.classList.add('drop-target-top');
+          else r.classList.add('drop-target-bottom');
+        }
+      });
+    }
+
+    function attachRowTouchHandlers(rowEl, idx) {
+      rowEl.addEventListener('touchstart', (e) => {
+        if (e.target.closest('button')) return;
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        dragState.startX = touch.clientX;
+        dragState.startY = touch.clientY;
+        dragState.fromIdx = idx;
+        dragState.toIdx = idx;
+        dragState.active = false;
+
+        clearTimeout(dragState.timerId);
+        dragState.timerId = setTimeout(() => {
+          dragState.active = true;
+          vibrate(45);
+          rowEl.classList.add('dragging');
+          showToast(`✋ Перетащите «${tasks[idx].title}» на нужный пункт`);
+        }, 450);
+      }, { passive: true });
+
+      rowEl.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - dragState.startX);
+        const dy = Math.abs(touch.clientY - dragState.startY);
+
+        if (!dragState.active) {
+          if (dx > 12 || dy > 12) {
+            clearTimeout(dragState.timerId);
+            dragState.timerId = null;
+          }
+          return;
+        }
+
+        e.preventDefault();
+        const rows = Array.from(document.querySelectorAll('#tasksContainer .task-row'));
+        let closestIdx = dragState.fromIdx;
+        let minDist = Infinity;
+
+        rows.forEach((r, rIdx) => {
+          const rect = r.getBoundingClientRect();
+          const centerY = rect.top + rect.height / 2;
+          const dist = Math.abs(touch.clientY - centerY);
+          if (dist < minDist) {
+            minDist = dist;
+            closestIdx = rIdx;
+          }
+        });
+
+        dragState.toIdx = closestIdx;
+        highlightDropTarget(closestIdx);
+      }, { passive: false });
+
+      const finishTouch = () => {
+        clearTimeout(dragState.timerId);
+        dragState.timerId = null;
+        if (dragState.active) {
+          const from = dragState.fromIdx;
+          const to = dragState.toIdx;
+          dragState.active = false;
+          dragState.fromIdx = -1;
+          dragState.toIdx = -1;
+          clearDragIndicators();
+          if (from !== to) {
+            moveTask(from, to);
+          }
+        } else {
+          dragState.fromIdx = -1;
+          dragState.toIdx = -1;
+        }
+      };
+
+      rowEl.addEventListener('touchend', finishTouch);
+      rowEl.addEventListener('touchcancel', finishTouch);
+    }
+
+    function render() {
+      const now = new Date();
+      document.getElementById('clockNow').textContent = now.toTimeString().slice(0,8);
+
+      const remTotalSec = getRemainingTotalSec(activeIdx);
+      const forecast = new Date(now.getTime() + remTotalSec*1000);
+      document.getElementById('clockForecast').textContent = forecast.toTimeString().slice(0,8);
+
+      const useDl = document.getElementById('useDeadline').checked;
+      const dlEl = document.getElementById('deadlineDiff');
+      if (useDl) {
+        const dlDate = getDeadlineDate(now);
+        const diffMin = Math.round((dlDate - forecast)/60000);
+        if (diffMin >= 0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
+        else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
+      } else {
+        dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8';
+      }
+
+      const sb = document.getElementById('savedBank');
+      if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; }
+      else sb.classList.add('hidden');
+
+      updateKeepAliveBadge();
+
+      const btnTitle = document.getElementById('mainBtnTitle');
+      const btnSub = document.getElementById('mainBtnSub');
+      const tDisp = document.getElementById('timerDisplay');
+      const pBar = document.getElementById('stepProgressBar');
+      const mainBtn = document.getElementById('mainBtn');
+      const pauseBtn = document.getElementById('pauseBtn');
+
+      if (activeIdx === -1) {
+        document.getElementById('stepCounter').textContent = `Всего задач: ${tasks.length}`;
+        document.getElementById('currentTaskName').textContent = 'Нажмите Старт';
+        tDisp.textContent = fmtSec(remTotalSec);
+        tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white';
+        pBar.style.width = '100%';
+        pBar.className = 'h-full bg-emerald-500 transition-all duration-300';
+        btnTitle.textContent = '▶ СТАРТ';
+        btnSub.textContent = tasks[0] ? `Первым делом: ${tasks[0].title}` : 'Добавьте задачи в список';
+        mainBtn.classList.remove('paused');
+        pauseBtn.textContent = '⏸';
+      } else if (activeIdx < tasks.length) {
+        const rem = stepDurationSec - stepElapsedSec;
+        const nextTask = tasks[activeIdx + 1];
+        document.getElementById('stepCounter').textContent = `Шаг ${activeIdx+1} из ${tasks.length}`;
+        document.getElementById('currentTaskName').textContent = tasks[activeIdx].title + (paused ? ' ⏸' : '');
+        tDisp.textContent = fmtSec(rem);
+        btnTitle.textContent = '✓ ГОТОВО';
+        btnSub.textContent = nextTask
+          ? `Дальше: ${nextTask.title} (${fmtSec(getStepTargetSec(activeIdx+1))}) →`
+          : 'Завершить всю утреннюю цепочку 🏁';
+        pauseBtn.textContent = paused ? '▶' : '⏸';
+
+        const pct = Math.max(0, Math.min(100, (rem / Math.max(1, stepDurationSec)) * 100));
+        pBar.style.width = `${pct}%`;
+
+        if (rem < 0) {
+          document.body.className = 'pb-16 state-over';
+          tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-rose-400';
+          pBar.className = 'h-full bg-rose-500 transition-all duration-300';
+        } else if (rem <= stepDurationSec * 0.2) {
+          document.body.className = 'pb-16 state-warn';
+          tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-amber-300';
+          pBar.className = 'h-full bg-amber-400 transition-all duration-300';
+        } else {
+          document.body.className = 'pb-16 state-ok';
+          tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white';
+          pBar.className = 'h-full bg-emerald-500 transition-all duration-300';
+        }
+        mainBtn.classList.toggle('paused', paused);
+      } else {
+        document.getElementById('stepCounter').textContent = 'Отличная работа!';
+        document.getElementById('currentTaskName').textContent = 'Все ритуалы завершены 🎉';
+        tDisp.textContent = '00:00';
+        pBar.style.width = '0%';
+        btnTitle.textContent = '🔄 ЗАНОВО';
+        btnSub.textContent = 'Посмотрите сводку План / Факт ниже';
+        mainBtn.classList.remove('paused');
+        pauseBtn.textContent = '⏸';
+      }
+
+      const totalSec = tasks.reduce((a,_,i) => a + getStepTargetSec(i), 0);
+      document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(totalSec/60)} мин`;
+
+      const box = document.getElementById('tasksContainer');
+      box.innerHTML = tasks.map((t, i) => {
+        const isCurrent = i === activeIdx;
+        const isDone = i < activeIdx;
+        const origSec = Math.round((t.originalMin || t.min)*60);
+        const curSec = getStepTargetSec(i);
+        const isCompressed = t.compressedSec != null && curSec < origSec;
+        const durationBadge = isCompressed
+          ? `<span class="text-xs text-slate-400 line-through mr-1">${t.originalMin || t.min} мин</span><span class="text-xs font-extrabold text-amber-300">→ ${(curSec/60).toFixed(1).replace('.0','')} мин ⚡</span>`
+          : `<span class="text-xs text-slate-300 font-semibold">(${t.min} мин)</span>`;
+        return `
+          <div data-idx="${i}" class="task-row flex justify-between items-center py-2.5 px-2 text-sm ${isCurrent ? 'text-emerald-400 font-extrabold bg-emerald-950/30 rounded-lg' : ''} ${isDone ? 'line-through text-slate-500' : ''}">
+            <div class="truncate pr-2 flex items-center gap-2">
+              <span class="text-slate-500 text-xs select-none">⋮⋮</span>
+              <span class="truncate">${i+1}. ${t.title}</span>
+              <span class="ml-1 flex-shrink-0">${durationBadge}</span>
+            </div>
+            <button type="button" onclick="removeTask(${i})"
+              class="text-rose-400 hover:text-rose-300 font-bold px-2 py-0.5 rounded row-btn">✕</button>
+          </div>`;
+      }).join('');
+
+      Array.from(box.querySelectorAll('.task-row')).forEach((rowEl, idx) => {
+        attachRowTouchHandlers(rowEl, idx);
+      });
+    }
+
+    setInterval(() => {
+      if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
+        stepElapsedSec++;
+        const rem = stepDurationSec - stepElapsedSec;
+        const halfPoint = Math.round(stepDurationSec * 0.5);
+        const warnPoint = Math.max(1, Math.round(stepDurationSec * 0.2));
+
+        if (stepDurationSec >= 120 && rem === halfPoint && !warned50) {
+          warned50 = true;
+          playBeep(660,0.11,2); vibrate(80);
+          const timeStr = rem >= 60 ? `${Math.ceil(rem/60)} минут` : `${rem} секунд`;
+          const msg = `Половина времени. Осталось ${timeStr} на ${tasks[activeIdx].title}`;
+          speakRu(msg); showToast('🌗 ' + msg);
+        }
+        if (rem === warnPoint && !warned20) {
+          warned20 = true;
+          playBeep(880,0.15,2); vibrate([60,40,60]);
+          const timeStr = rem >= 60 ? `${Math.ceil(rem/60)} минут` : `${rem} секунд`;
+          const msg = `Осталось ${timeStr} на ${tasks[activeIdx].title}`;
+          speakRu(msg); showToast('⚠️ ' + msg);
+        }
+        if (rem === 0) {
+          playBeep(440,0.3,3); vibrate([150,80,150]);
+          const msg = `Время на ${tasks[activeIdx].title} вышло! Нажмите Готово.`;
+          speakRu(msg); showToast('🚨 ' + msg);
+        }
+        if (rem < 0 && Math.abs(rem) % 60 === 0) {
+          const overMin = Math.abs(rem)/60;
+          const fTime = document.getElementById('clockForecast').textContent.slice(0,5);
+          playBeep(360,0.25,2);
+          speakRu(`Просрочка ${overMin} минут. Финиш в ${fTime}`);
+        }
+      }
+      render();
+    }, 1000);
+
+    render();
+  </script>
+</body>
+</html>
