@@ -226,7 +226,7 @@
           </button>
           <div id="constructorVoiceStatus" class="text-[11px] text-slate-400 text-center min-h-[14px]"></div>
           <div class="text-[10px] text-slate-500 leading-snug">
-            Примеры: «добавь шаблон Тренировка, разминка 10 минут, бег 20 минут» или «назови Вечерний, душ 10, чтение 15»
+            Пример: «добавь шаблон Тренировка, разминка 10 минут, бег 20 минут, душ 10 минут»
           </div>
         </div>
 
@@ -354,7 +354,7 @@
     let silenceTimer = null;
     let autoWindowTimer = null;
     let recognizedInCurrentWindow = false;
-    let transcriptBuffer = [];
+    let latestTranscript = '';
 
     function restoreDefaultTemplate() {
       customTemplates[0] = { id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) };
@@ -686,9 +686,62 @@
       return true;
     }
 
-    function interpretSinglePhrase(rawPhrase, inheritedAddMode = false) {
+    function cleanNoisePrefix(str) {
+      return str
+        .replace(/^(?:добавь|впиши|закинь|о\s+да|да|ну|так|вот|на)\s+/gi, '')
+        .replace(/\s+(?:на|в|по|о\s+да)$/gi, '')
+        .trim();
+    }
+
+    function extractTaskItemsFromText(rawText, targetArray) {
+      const normalized = rawText.toLowerCase().replace(/ё/g, 'е').replace(/[.,!?]+$/g, '').trim();
+      if (!normalized) return 0;
+
+      // Разбиваем по запятым, союзам или границе «<число> минут <следующее дело>»
+      const segmented = normalized
+        .replace(/(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м)\s+(?:и\s+)?(?=(?:добавь|впиши|закинь|о\s+да\s+)?[а-яa-z])/gi, '$1 минут | ')
+        .split(/(?:\s*\|\s*|,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+)/i)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      let added = 0;
+      segmented.forEach(seg => {
+        const cleaned = cleanNoisePrefix(seg);
+        if (!cleaned || cleaned.length < 2) return;
+        const minMatch = cleaned.match(/^(?:(.+?)\s+)?(?:на\s+)?(\d+(?:[.,]\d+)?|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двенадцать|пятнадцать|двадцать|тридцать|полтора|полчаса|пару)\s*(?:минут\w*|мин|м)?$/i);
+        if (minMatch && minMatch[1]) {
+          const titleClean = cleanNoisePrefix(minMatch[1]);
+          const parsedMin = parseNumberToken(minMatch[2]);
+          if (titleClean && parsedMin !== null) {
+            targetArray.push({
+              title: titleClean.charAt(0).toUpperCase() + titleClean.slice(1),
+              min: parsedMin,
+              originalMin: parsedMin,
+              compressedSec: null,
+              addedSec: 0
+            });
+            added++;
+            return;
+          }
+        }
+        // Если без минут — добавляем с 5 мин
+        if (!/^(?:добавь|впиши|закинь|о|да)$/i.test(cleaned)) {
+          targetArray.push({
+            title: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
+            min: 5,
+            originalMin: 5,
+            compressedSec: null,
+            addedSec: 0
+          });
+          added++;
+        }
+      });
+      return added;
+    }
+
+    function interpretSinglePhrase(rawPhrase) {
       const text = rawPhrase.toLowerCase().replace(/ё/g, 'е').replace(/[.,!?]+$/g, '').trim();
-      if (!text || text.length < 2 || /^(и|а|ну|так|вот|эм|ээ|мм)$/i.test(text)) return false;
+      if (!text || text.length < 2) return false;
 
       if (/закройся|закрой таймер|вырубай|стоп.*отмен|отмени сесси|отмени вс[еe]|сбрось вс[еe]|стоп игра/.test(text)) {
         resetRoutine();
@@ -697,8 +750,7 @@
         return true;
       }
 
-      if (/^(дальше|следующ|готово|сделано|закончил|вс[еe]|погнали|переключай|проехали|скип|пропусти)(?:\s|$)/.test(text) ||
-          /(?:^|\s)(дальше|следующий шаг|следующее дело|готово|пропусти|скип)(?:$|\s)/.test(text)) {
+      if (/^(дальше|следующ|готово|сделано|закончил|вс[еe]|погнали|переключай|проехали|скип|пропусти)(?:\s|$)/.test(text)) {
         if (activeIdx >= 0 && activeIdx < tasks.length) {
           handleMainBtn();
           return true;
@@ -760,7 +812,7 @@
         }
       }
 
-      const deltaMatch = text.match(/(?:накинь|добавь|плюс|\+|дай|убавь|минус|\-|срежь|сократи|урежь|уменьши)\s*(.+)$/i);
+      const deltaMatch = text.match(/(?:накинь|плюс|\+|дай|убавь|минус|\-|срежь|сократи|урежь|уменьши)\s*(.+)$/i);
       if (deltaMatch && !/пункт|место|шаг/.test(text)) {
         const rest = deltaMatch[1].trim();
         const isMinus = /убавь|минус|\-|срежь|сократи|урежь|уменьши/.test(text);
@@ -774,20 +826,6 @@
           if (targetIdx >= 0 && targetIdx < tasks.length) {
             adjustTaskDurationSec(targetIdx, deltaSec, isMinus ? '(сокращено голосом)' : '(добавлено голосом)');
             speakRu(isMinus ? 'Сократил время' : 'Добавил время');
-            return true;
-          }
-        }
-      }
-
-      const exactMatch = text.match(/(?:сделай|поставь|оставь|задай)\s+(.+?)\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин)?$/i);
-      if (exactMatch) {
-        const targetPart = exactMatch[1].trim();
-        const minVal = parseNumberToken(exactMatch[2]);
-        if (minVal !== null) {
-          const targetIdx = findTaskIndexByName(targetPart);
-          if (targetIdx >= 0 && targetIdx < tasks.length) {
-            setTaskExactMinutes(targetIdx, minVal);
-            speakRu(`Поставил ${minVal} минут`);
             return true;
           }
         }
@@ -815,82 +853,20 @@
         }
       }
 
-      const withoutVerb = text.replace(/^(?:добавь|впиши|закинь)\s+/i, '').trim();
-      const hasAddVerb = inheritedAddMode || /^(?:добавь|впиши|закинь)(?:\s|$)/i.test(text);
-      const hasMinUnit = /(?:^|\s)(?:\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин)(?:$|\s)/i.test(text);
-
-      if (hasAddVerb || hasMinUnit || withoutVerb.length >= 2) {
-        const endPosMatch = withoutVerb.match(/^(.+?)(?:,?\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м)?)?\s*,?\s+(?:(последним|последний)|([а-яa-z0-9\-]+)\s*(?:пунктом|пункт|местом|место|делом|дело|шагом|шаг)?)$/i);
-        if (endPosMatch && (endPosMatch[3] || endPosMatch[4])) {
-          const rawTitle = endPosMatch[1].replace(/\s+(?:на|в|по)$/i, '').trim();
-          const minVal = endPosMatch[2] ? parseNumberToken(endPosMatch[2]) : 5;
-          const posVal = endPosMatch[3] ? (tasks.length + 1) : parsePositionToken(endPosMatch[4]);
-          if (rawTitle && posVal !== null) {
-            insertTaskAt(posVal, rawTitle, minVal !== null ? minVal : 5);
-            return true;
-          }
-        }
-
-        const startPosMatch = withoutVerb.match(/^([а-яa-z0-9\-]+)\s+(?:пунктом|пункт|местом|место|делом|дело|шагом|шаг)\s+(.+)$/i);
-        if (startPosMatch) {
-          const posToken = startPosMatch[1];
-          const rest = startPosMatch[2].trim();
-          const parsedPos = (posToken === 'последним' || posToken === 'последний')
-            ? tasks.length + 1
-            : parsePositionToken(posToken);
-          if (parsedPos !== null) {
-            const minMatch = rest.match(/(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м)?$/i);
-            let min = 5;
-            let title = rest;
-            if (minMatch) {
-              const parsedMin = parseNumberToken(minMatch[1]);
-              if (parsedMin !== null) {
-                min = parsedMin;
-                title = rest.slice(0, minMatch.index).replace(/\s+(?:на|в|по)$/i, '').trim();
-              }
-            }
-            if (title) {
-              insertTaskAt(parsedPos, title, min);
-              return true;
-            }
-          }
-        }
-
-        const simpleMatch = withoutVerb.match(/^(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+))?\s*(?:минут\w*|мин)?$/i);
-        if (simpleMatch) {
-          const title = simpleMatch[1].replace(/\s+(?:на|в|по)$/i, '').trim();
-          const parsedMin = simpleMatch[2] ? parseNumberToken(simpleMatch[2]) : null;
-          const min = parsedMin !== null ? parsedMin : 5;
-          if (title) {
-            const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
-            tasks.push({ title: capTitle, min, originalMin: min, compressedSec: null, addedSec: 0 });
-            saveTasks(); render();
-            showToast(`＋ Добавлено: ${capTitle} (${min} мин)`);
-            return true;
-          }
-        }
+      // Добавление дел (одиночных или списком)
+      const addedCount = extractTaskItemsFromText(text, tasks);
+      if (addedCount > 0) {
+        saveTasks();
+        render();
+        showToast(`＋ Добавлено пунктов: ${addedCount}`);
+        return true;
       }
 
       return false;
     }
 
     function parseVoiceChain(fullText) {
-      const normalized = fullText.replace(/ё/g, 'е').trim();
-      if (!normalized) return false;
-
-      const startsWithAdd = /^(?:добавь|впиши|закинь)\b/i.test(normalized);
-      const parts = normalized
-        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=добавь|удали|убери|сделай|накинь|убавь|сократи|поменяй|пауза|дальше|готово))/i)
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      let anyRecognized = false;
-      for (const part of parts) {
-        if (interpretSinglePhrase(part, startsWithAdd)) {
-          anyRecognized = true;
-        }
-      }
-      return anyRecognized;
+      return interpretSinglePhrase(fullText);
     }
 
     function cleanTemplateTitle(raw) {
@@ -923,56 +899,14 @@
           if (nameInput) nameInput.value = capName;
           nameUpdated = true;
           const matchEnd = explicitNameMatch.index + explicitNameMatch[0].length;
-          const tail = remaining.slice(matchEnd).trim();
-          const boundaryWord = explicitNameMatch[0].match(/(первый|1-й)\s*$/i);
-          remaining = (boundaryWord ? boundaryWord[1] + ' ' : '') + tail;
-        }
-      } else {
-        const endNameMatch = remaining.match(/^(.+?)(?:,?\s+(?:назови|дай\s+название|имя\s+шаблона|название\s+шаблона|шаблон)\s+(.+))$/i);
-        if (endNameMatch && endNameMatch[2]) {
-          const cleanedName = cleanTemplateTitle(endNameMatch[2]);
-          if (cleanedName) {
-            const capName = cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1);
-            if (nameInput) nameInput.value = capName;
-            nameUpdated = true;
-            remaining = endNameMatch[1].trim();
-          }
+          remaining = remaining.slice(matchEnd).trim();
         }
       }
 
-      const chunks = remaining
-        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+)/i)
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      let addedCount = 0;
-      chunks.forEach(chunk => {
-        const cleaned = chunk
-          .replace(/^(?:добавь|впиши|закинь|в него|в шаблон|пункт\s*\d+\s*)+/i, '')
-          .trim();
-        if (!cleaned) return;
-        const m = cleaned.match(/^(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+))?\s*(?:минут\w*|мин|м)?$/i);
-        if (!m) return;
-        const titleRaw = m[1].replace(/\s+(?:на|в|по)$/i, '').trim();
-        if (!titleRaw) return;
-        const parsedMin = m[2] ? parseNumberToken(m[2]) : null;
-        const min = parsedMin !== null ? parsedMin : 5;
-        constructorDraftTasks.push({
-          title: titleRaw.charAt(0).toUpperCase() + titleRaw.slice(1),
-          min
-        });
-        addedCount++;
-      });
-
+      const addedCount = extractTaskItemsFromText(remaining, constructorDraftTasks);
       if (addedCount > 0 || nameUpdated) {
         renderConstructor();
-        if (nameUpdated && addedCount > 0) {
-          showToast(`🎙 Шаблон «${nameInput.value}»: добавлено пунктов — ${addedCount}`);
-        } else if (nameUpdated) {
-          showToast(`🎙 Название шаблона: «${nameInput.value}»`);
-        } else {
-          showToast(`🎙 Шаблон: добавлено пунктов — ${addedCount}`);
-        }
+        showToast(`🎙 Шаблон обновлен (${addedCount} пунктов)`);
         return true;
       }
       return false;
@@ -985,8 +919,8 @@
       autoWindowTimer = null;
 
       const prevMode = voiceMode;
-      const joined = transcriptBuffer.join(' ').trim();
-      transcriptBuffer = [];
+      const joined = latestTranscript.trim();
+      latestTranscript = '';
       voiceMode = null;
 
       const mainBtn = document.getElementById('voiceCmdBtn');
@@ -1038,10 +972,9 @@
 
       stopActiveRecognition(false);
       voiceMode = mode;
-      transcriptBuffer = [];
+      latestTranscript = '';
       if (btnEl) btnEl.classList.add('mic-active');
       if (statusEl) statusEl.textContent = '🎙 Запускаю микрофон...';
-      showToast('🎙 Микрофон активирован');
 
       if (!SpeechRecognition) {
         if (statusEl) statusEl.textContent = 'Браузер не поддерживает SpeechRecognition. Откройте в Google Chrome.';
@@ -1065,25 +998,16 @@
       };
 
       rec.onresult = (event) => {
-        let finalChunk = '';
-        let interimChunk = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const txt = event.results[i][0].transcript.trim();
-          if (!txt) continue;
-          if (event.results[i].isFinal) {
-            finalChunk += (finalChunk ? ' ' : '') + txt;
-          } else {
-            interimChunk += (interimChunk ? ' ' : '') + txt;
-          }
+        let best = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const txt = (event.results[i][0]?.transcript || '').trim();
+          if (txt) best += (best ? ' ' : '') + txt;
         }
-        if (finalChunk) {
-          transcriptBuffer.push(finalChunk);
+        if (best) {
+          latestTranscript = best;
+          if (statusEl) statusEl.textContent = `🎙 Записано: «${latestTranscript}»`;
+          resetSilenceTimer(3000);
         }
-        const preview = [...transcriptBuffer, interimChunk].filter(Boolean).join(' ').trim();
-        if (preview && statusEl) {
-          statusEl.textContent = `🎙 Записано: «${preview}»`;
-        }
-        resetSilenceTimer(3000);
       };
       rec.onerror = (event) => {
         const errCode = event && event.error ? ` (${event.error})` : '';
