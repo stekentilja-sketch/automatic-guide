@@ -194,19 +194,25 @@
 
     <!-- 5. КОНСТРУКТОР ШАБЛОНОВ -->
     <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
-      <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
         <span class="text-sm font-extrabold text-white">📂 Конструктор шаблонов</span>
-        <button type="button" onclick="openTemplateConstructor(-1)"
-          class="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold text-xs active:scale-95 transition">
-          ＋ Новый шаблон
-        </button>
+        <div class="flex gap-1.5">
+          <button type="button" onclick="restoreDefaultTemplate()"
+            class="px-2.5 py-1.5 rounded-lg bg-sky-500/20 border border-sky-500/50 text-sky-300 font-bold text-xs active:scale-95 transition">
+            📋 Готовый шаблон
+          </button>
+          <button type="button" onclick="openTemplateConstructor(-1)"
+            class="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold text-xs active:scale-95 transition">
+            ＋ Новый шаблон
+          </button>
+        </div>
       </div>
 
       <div id="templatesList" class="flex flex-wrap gap-2"></div>
 
       <div id="templateConstructorBox" class="bg-slate-900/90 border border-slate-700 rounded-xl p-3 space-y-2.5">
         <div class="flex items-center justify-between gap-2">
-          <span id="constructorModeLabel" class="text-xs font-extrabold uppercase tracking-wider text-sky-400">Новый шаблон</span>
+          <span id="constructorModeLabel" class="text-xs font-extrabold uppercase tracking-wider text-sky-400">Редактор шаблона</span>
           <span id="constructorTotalMin" class="text-xs font-bold text-slate-300 tabular-nums">0 мин</span>
         </div>
 
@@ -301,9 +307,8 @@
     let journal = safeJsonParse(localStorage.getItem('m_journal'), []);
     if (!Array.isArray(journal)) journal = [];
 
-    if (customTemplates.length === 0) {
-      const legacyTasks = safeJsonParse(localStorage.getItem('m_tasks'), null);
-      customTemplates.push({ id: Date.now(), name: 'Мой список (по умолч.)', tasks: Array.isArray(legacyTasks) && legacyTasks.length ? legacyTasks : defaultTemplate });
+    if (customTemplates.length === 0 || !Array.isArray(customTemplates[0]?.tasks) || customTemplates[0].tasks.length === 0) {
+      customTemplates = [{ id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) }];
       localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
     }
 
@@ -318,7 +323,7 @@
         activeTemplateIdx = session.activeTemplateIdx;
       }
     } else {
-      const baseTpl = customTemplates[activeTemplateIdx] && Array.isArray(customTemplates[activeTemplateIdx].tasks)
+      const baseTpl = (customTemplates[activeTemplateIdx] && Array.isArray(customTemplates[activeTemplateIdx].tasks) && customTemplates[activeTemplateIdx].tasks.length)
         ? customTemplates[activeTemplateIdx].tasks
         : defaultTemplate;
       tasks = JSON.parse(JSON.stringify(baseTpl));
@@ -337,8 +342,8 @@
     let routineStats = session && Array.isArray(session.routineStats) ? session.routineStats : [];
     let pendingSuggestions = [];
 
-    let constructorEditIdx = -1;
-    let constructorDraftTasks = [];
+    let constructorEditIdx = activeTemplateIdx;
+    let constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
 
     let stepDurationSec = 0, stepElapsedSec = 0;
     let wakeLock = null, audioCtx = null, keepAliveActive = false, silentWavUrl = null;
@@ -350,6 +355,20 @@
     let autoWindowTimer = null;
     let recognizedInCurrentWindow = false;
     let transcriptBuffer = [];
+
+    function restoreDefaultTemplate() {
+      customTemplates[0] = { id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) };
+      activeTemplateIdx = 0;
+      localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+      localStorage.setItem('m_active_tpl_idx', '0');
+      tasks = JSON.parse(JSON.stringify(defaultTemplate));
+      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      resetRoutine();
+      openTemplateConstructor(0);
+      renderTemplates();
+      render();
+      showToast('📋 Готовый утренний шаблон восстановлен');
+    }
 
     function saveSession() {
       const s = {
@@ -1017,27 +1036,33 @@
       const statusEl = document.getElementById(isCtor ? 'constructorVoiceStatus' : 'voiceStatus');
       const btnEl = document.getElementById(isCtor ? 'constructorVoiceBtn' : 'voiceCmdBtn');
 
-      if (!SpeechRecognition) {
-        if (statusEl) statusEl.textContent = 'Голосовой ввод недоступен в этом окне. Откройте в Google Chrome.';
-        showToast('🎙 Откройте приложение в Google Chrome для доступа к микрофону');
-        return;
-      }
-
       stopActiveRecognition(false);
-      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
-
       voiceMode = mode;
       transcriptBuffer = [];
       if (btnEl) btnEl.classList.add('mic-active');
-      if (statusEl) statusEl.textContent = isCtor
-        ? '🎙 Надиктуйте название шаблона и список дел с минутами (авто-стоп через 3 сек тишины)...'
-        : '🎙 Слушаю команды (авто-стоп через 3 сек тишины после речи)...';
+      if (statusEl) statusEl.textContent = '🎙 Запускаю микрофон...';
+      showToast('🎙 Микрофон активирован');
+
+      if (!SpeechRecognition) {
+        if (statusEl) statusEl.textContent = 'Браузер не поддерживает SpeechRecognition. Откройте в Google Chrome.';
+        if (btnEl) btnEl.classList.remove('mic-active');
+        voiceMode = null;
+        return;
+      }
+
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
 
       const rec = new SpeechRecognition();
       rec.lang = 'ru-RU';
-      rec.continuous = true;
+      rec.continuous = false;
       rec.interimResults = true;
       activeRecognition = rec;
+
+      rec.onstart = () => {
+        if (statusEl) statusEl.textContent = isCtor
+          ? '🎙 Надиктуйте название шаблона и список дел с минутами...'
+          : '🎙 Слушаю команду (авто-стоп через 3 сек тишины)...';
+      };
 
       rec.onresult = (event) => {
         let finalChunk = '';
@@ -1067,16 +1092,14 @@
       };
       rec.onend = () => {
         if (voiceMode === mode && activeRecognition === rec) {
-          try {
-            rec.start();
-          } catch (e) {
-            stopActiveRecognition(true);
-          }
+          stopActiveRecognition(true);
         }
       };
 
-      try { rec.start(); } catch(e) {
-        if (statusEl) statusEl.textContent = 'Не удалось запустить микрофон';
+      try {
+        rec.start();
+      } catch(e) {
+        if (statusEl) statusEl.textContent = `Не удалось запустить микрофон (${e.message || 'error'})`;
         stopActiveRecognition(false);
       }
     }
@@ -1770,7 +1793,7 @@
     }, 500);
 
     try {
-      openTemplateConstructor(-1);
+      openTemplateConstructor(activeTemplateIdx);
       renderTemplates();
       renderJournal();
       render();
