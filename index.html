@@ -34,15 +34,27 @@
     .btn-giant.paused { background:linear-gradient(135deg,#eab308 0%,#ca8a04 100%); color:#1c1917; }
     @keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(244,63,94,.7)} 50%{box-shadow:0 0 0 10px rgba(244,63,94,0)} }
     .mic-active { animation:micPulse 1.3s infinite; background:#e11d48 !important; border-color:#fda4af !important; color:#fff !important; }
-    .row-btn { min-width:44px; min-height:44px; }
-    .task-row { touch-action:pan-y; user-select:none; transition:transform .15s ease, background .15s ease, opacity .15s ease; }
-    .task-row.dragging {
-      position:relative; z-index:30; background:#1e3a5f !important;
-      border:1px solid #38bdf8; border-radius:12px; transform:scale(1.02);
-      box-shadow:0 12px 28px rgba(0,0,0,.55); opacity:.96;
+    .row-btn { min-width:38px; min-height:38px; }
+    .task-row { touch-action:pan-y; user-select:none; transition:transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease; border:2px solid transparent; }
+    /* Яркое выделение ОТКУДА перетаскиваем */
+    .task-row.dragging-source {
+      position:relative; z-index:30;
+      background:#1e3a8a !important;
+      border-color:#38bdf8 !important;
+      border-radius:12px;
+      transform:scale(1.02);
+      box-shadow:0 10px 25px rgba(56,189,248,.45);
     }
-    .task-row.drop-target-top { border-top:2px solid #38bdf8; }
-    .task-row.drop-target-bottom { border-bottom:2px solid #38bdf8; }
+    /* Яркое выделение КУДА упадёт пункт */
+    .task-row.drop-target-active {
+      background:#064e3b !important;
+      border-color:#22c55e !important;
+      border-radius:12px;
+      box-shadow:0 0 0 2px rgba(34,197,94,.4);
+    }
+    .drag-badge { display:none; }
+    .task-row.dragging-source .drag-badge-from { display:inline-flex; }
+    .task-row.drop-target-active .drag-badge-to { display:inline-flex; }
     .chart-bar { transition: height 0.5s ease-out; }
   </style>
 </head>
@@ -180,8 +192,10 @@
         <div id="voiceStatus" class="text-[11px] text-slate-300 text-center min-h-[16px]"></div>
       </div>
 
-      <div class="text-[11px] text-slate-400">Зажмите пункт пальцем и перетащите, чтобы поменять порядок.</div>
-      <div id="tasksContainer" class="divide-y divide-slate-700/70 bg-slate-900/50 rounded-xl"></div>
+      <div id="dragHintBar" class="text-[11px] text-slate-400 flex items-center justify-between">
+        <span>Зажмите пункт (0.4 сек) для перетаскивания или нажмите ✎ для правки.</span>
+      </div>
+      <div id="tasksContainer" class="divide-y divide-slate-700/70 bg-slate-900/50 rounded-xl p-1"></div>
 
       <div class="flex gap-2 pt-1">
         <input type="text" id="newTaskTitle" placeholder="Название дела..."
@@ -284,7 +298,7 @@
   <audio id="silentHtmlAudio" loop playsinline class="hidden"></audio>
 
   <script>
-    // 1. Канарейка: проверка целостности скобок после копирования
+    // 1. Канарейка целостности скобок после копирования
     try {
       const __probe = [1, 2].map(x => x * 10);
       if (__probe[0] !== 10) throw new Error('probe');
@@ -295,7 +309,6 @@
       throw e;
     }
 
-    // Экранирование строк для вёрстки
     function esc(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -347,7 +360,7 @@
       tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
     }
 
-    let activeIdx = session ? session.activeIdx : -1;
+    let activeIdx = (session && typeof session.activeIdx === 'number' && session.activeIdx < tasks.length) ? session.activeIdx : -1;
     let stepStartMs = session ? session.stepStartMs : 0;
     let totalPausedMs = session ? session.totalPausedMs : 0;
     let pauseStartMs = session ? session.pauseStartMs : 0;
@@ -359,10 +372,14 @@
     let routineStats = session && Array.isArray(session.routineStats) ? session.routineStats : [];
     let pendingSuggestions = [];
 
+    // Индекс редактируемого дела в «Текущем списке дел» (-1 = ничего не редактируется)
+    let editingTaskIdx = -1;
+
     let constructorEditIdx = activeTemplateIdx;
     let constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
 
-    let stepDurationSec = 0, stepElapsedSec = 0;
+    let stepDurationSec = (activeIdx >= 0 && activeIdx < tasks.length) ? getStepTargetSec(activeIdx) : 0;
+    let stepElapsedSec = 0;
     let wakeLock = null, audioCtx = null, keepAliveActive = false, silentWavUrl = null;
     let dragState = { timerId: null, startX: 0, startY: 0, fromIdx: -1, toIdx: -1, active: false };
 
@@ -574,12 +591,10 @@
     }
 
     // ============ НАДЁЖНЫЙ ПАРСЕР ЧИСЕЛ И ГОЛОСОВЫХ КОМАНД ============
-    // Переводит все числительные прописью (1..90, 11..19, полтора, полчаса, пару) в цифры до разбора
     function normalizeSpokenNumbers(str) {
       if (!str) return '';
       let s = str.toLowerCase().replace(/ё/g, 'е');
 
-      // Специальные выражения времени
       s = s.replace(/(?:^|\s)полтор[аы]\s*(?:минут[ауы]?|мин)?(?=\s|$|[.,])/g, ' 1.5 минут');
       s = s.replace(/(?:^|\s)полчаса(?=\s|$|[.,])/g, ' 30 минут');
       s = s.replace(/(?:^|\s)пар[уаы]\s*(?:минут[ауы]?|мин)(?=\s|$|[.,])/g, ' 2 минуты');
@@ -599,24 +614,20 @@
         ['одиннадцать', 11], ['десять', 10]
       ];
 
-      // 1. Составные числа вида «двадцать пять» -> 25
       for (const [tWord, tVal] of tensMap) {
         for (const [oWord, oVal] of onesMap) {
           const re = new RegExp(`(^|\\s)${tWord}\\s+${oWord}(?=\\s|$|[.,!?])`, 'g');
           s = s.replace(re, `$1${tVal + oVal}`);
         }
       }
-      // 2. Числа 10..19 (обязательно ДО одиночных 1..9!)
       for (const [w, val] of teensMap) {
         const re = new RegExp(`(^|\\s)${w}(?=\\s|$|[.,!?])`, 'g');
         s = s.replace(re, `$1${val}`);
       }
-      // 3. Круглые десятки 20..90
       for (const [w, val] of tensMap) {
         const re = new RegExp(`(^|\\s)${w}(?=\\s|$|[.,!?])`, 'g');
         s = s.replace(re, `$1${val}`);
       }
-      // 4. Одиночные 1..9
       for (const [w, val] of onesMap) {
         const re = new RegExp(`(^|\\s)${w}(?=\\s|$|[.,!?])`, 'g');
         s = s.replace(re, `$1${val}`);
@@ -761,12 +772,10 @@
         .trim();
     }
 
-    // Разбирает один или несколько пунктов вида «<дело> <число> минут»
     function extractTaskItemsFromText(rawText, targetArray, allowWithoutMinutes = false) {
       const normalized = normalizeSpokenNumbers(rawText).replace(/[.,!?]+$/g, '').trim();
       if (!normalized) return 0;
 
-      // Режем сразу после «<число> минут/мин», если дальше идёт новое слово, либо по запятым/союзам
       const segmented = normalized
         .replace(/(\d+(?:[.,]\d+)?)\s*(?:минут[ауы]?|мин|м)\s+(?:и\s+)?(?=[а-яa-z])/gi, '$1 минут | ')
         .split(/(?:\s*\|\s*|,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+а также\s+)/i)
@@ -778,7 +787,6 @@
         const cleaned = cleanNoisePrefix(seg);
         if (!cleaned || cleaned.length < 2) return;
 
-        // Ищем число в конце сегмента: «помыться 18 минут» или «помыться на 18»
         const minMatch = cleaned.match(/^(.+?)\s+(?:на\s+)?(\d+(?:[.,]\d+)?)\s*(?:минут[ауы]?|мин|м)?$/i);
         if (minMatch && minMatch[1]) {
           const titleClean = cleanNoisePrefix(minMatch[1]);
@@ -796,7 +804,6 @@
           }
         }
 
-        // Если минуты не названы, добавляем по умолчанию 5 мин ТОЛЬКО когда явно разрешено (например, сказано «добавь одеться и выйти»)
         if (allowWithoutMinutes && !/^(?:добавь|добавить|впиши|закинь|удали|убери|поменяй|сделай|поставь)$/i.test(cleaned)) {
           targetArray.push({
             title: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
@@ -815,7 +822,6 @@
       const text = normalizeSpokenNumbers(rawPhrase).replace(/[.,!?]+$/g, '').trim();
       if (!text || text.length < 2) return false;
 
-      // 1. Отмена / закрытие сессии
       if (/закройся|закрой таймер|вырубай|стоп.*отмен|отмени сесси|отмени вс[еe]|сбрось вс[еe]|стоп игра/.test(text)) {
         resetRoutine();
         speakRu('Сессия отменена');
@@ -823,7 +829,6 @@
         return true;
       }
 
-      // 2. Переход дальше / пропуск
       if (/^(дальше|следующ|готово|сделано|закончил|вс[еe]|погнали|переключай|проехали|скип|пропусти)(?:\s|$)/.test(text)) {
         if (activeIdx >= 0 && activeIdx < tasks.length) {
           handleMainBtn();
@@ -835,7 +840,6 @@
         }
       }
 
-      // 3. Пауза / Продолжить / Назад / Старт
       if (/^(?:пауза|притормози|подожди|стоп шаг)(?:\s|$)/.test(text)) {
         if (!paused && activeIdx >= 0 && activeIdx < tasks.length) {
           togglePause();
@@ -862,7 +866,6 @@
         }
       }
 
-      // 4. Тихий режим и сжатие
       if (/тихий режим/.test(text)) {
         const el = document.getElementById('silentModeToggle');
         if (/выключи|офф|off/.test(text)) el.checked = false;
@@ -877,10 +880,8 @@
         return true;
       }
 
-      // 5. Позиционное добавление (в конец / N-м пунктом в начале или в конце фразы)
       const withoutAddVerb = text.replace(/^(?:добавь|добавить|впиши|закинь|поставь)\s+/i, '').trim();
 
-      // Вариант 5А: позиция в конце — «добавь одеться и выйти 5 минут седьмым пунктом» / «... 7 пункт»
       const endPosMatch = withoutAddVerb.match(/^(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?)\s*(?:минут[ауы]?|мин|м)?)?\s*,?\s+(?:(последним|последний|в\s+конец)|([а-яa-z0-9\-]+)\s*(?:пунктом|пункт|местом|место|шагом|шаг))$/i);
       if (endPosMatch && (endPosMatch[3] || endPosMatch[4])) {
         const rawTitle = cleanNoisePrefix(endPosMatch[1]);
@@ -892,7 +893,6 @@
         }
       }
 
-      // Вариант 5Б: позиция в начале — «добавь седьмым пунктом одеться и выйти 5 минут»
       const startPosMatch = withoutAddVerb.match(/^([а-яa-z0-9\-]+)\s+(?:пунктом|пункт|местом|место|шагом|шаг)\s+(.+)$/i);
       if (startPosMatch) {
         const posVal = (startPosMatch[1] === 'последним' || startPosMatch[1] === 'последний')
@@ -910,7 +910,6 @@
         }
       }
 
-      // 6. Поменять местами: «поменяй местами душ и зарядку» или «поменяй 2 и 4»
       const swapMatch = text.match(/поменяй\s+(?:местами\s+)?(.+?)\s+и\s+(.+)$/i);
       if (swapMatch) {
         const ok = swapTasksByQuery(swapMatch[1].trim(), swapMatch[2].trim());
@@ -920,7 +919,6 @@
         }
       }
 
-      // 7. Задать точное время существующему делу: «сделай душ 18 минут» / «поставь зарядку на 15 минут»
       const exactMatch = text.match(/^(?:сделай|поставь|оставь|задай|измени)\s+(.+?)\s+(?:на\s+)?(\d+(?:[.,]\d+)?)\s*(?:минут[ауы]?|мин|м)?$/i);
       if (exactMatch) {
         const targetIdx = findTaskIndexByName(exactMatch[1].trim());
@@ -932,7 +930,6 @@
         }
       }
 
-      // 8. Прибавить / убавить время: «накинь 2 минуты», «сократи еду на 3 минуты»
       const deltaMatch = text.match(/^(?:накинь|плюс|\+|дай|убавь|минус|\-|срежь|сократи|урежь|уменьши)\s*(.+)$/i);
       if (deltaMatch && !/пункт|место|шаг/.test(text)) {
         const rest = deltaMatch[1].trim();
@@ -952,7 +949,6 @@
         }
       }
 
-      // 9. Удаление дела по названию или номеру: «удали помыться», «удали 8 пункт»
       if (/^(?:убери|удали|вычеркни|снеси)\b/i.test(text)) {
         const cleanedTarget = text
           .replace(/^(?:убери|удали|вычеркни|снеси)\s+/i, '')
@@ -969,7 +965,6 @@
         return false;
       }
 
-      // 10. Добавление новых дел (одиночных или списком)
       const hasAddKeyword = /^(?:добавь|добавить|впиши|закинь|создай)(?:\s|$)/i.test(text);
       const hasMinutesPattern = /\d+(?:[.,]\d+)?\s*(?:минут[ауы]?|мин|м)?$/i.test(text);
       if (hasAddKeyword || hasMinutesPattern) {
@@ -996,12 +991,10 @@
       const normalized = normalizeSpokenNumbers(fullText).trim();
       if (!normalized) return false;
 
-      // Если это перечисление дел для добавления («добавь А 10 минут, Б 5 минут»), отдаём сразу в interpretSinglePhrase
       if (/^(?:добавь|добавить|впиши|закинь)\b/i.test(normalized) && !/\b(?:удали|убери|поменяй|сделай|поставь|пауза|дальше)\b/i.test(normalized)) {
         return interpretSinglePhrase(normalized);
       }
 
-      // Иначе режем на отдельные команды по союзам перед ключевыми глаголами
       const parts = normalized
         .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+)(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)\b)/i)
         .map(s => s.trim())
@@ -1033,7 +1026,6 @@
       let remaining = normalized;
       let nameUpdated = false;
 
-      // Вариант 1: название шаблона в начале
       const explicitNameMatch = remaining.match(
         /^(?:(?:добавь|создай|сделай|заведи|назови|дай)\s+)?(?:новый\s+)?(?:название\s+шаблона|имя\s+шаблона|название|имя|шаблон|назови)\s+(.+?)(?:,?\s+(?:добавь|впиши|закинь|список|дела|пункты|пункт|задачи|первый|1-й)(?:\s|$)|$)/i
       );
@@ -1048,7 +1040,6 @@
           remaining = remaining.slice(matchEnd).trim();
         }
       } else {
-        // Вариант 2: название шаблона в конце фразы («разминка 10, бег 20, назови шаблон Тренировка»)
         const endNameMatch = remaining.match(/^(.+?)(?:,?\s+(?:назови|дай\s+название|имя\s+шаблона|название\s+шаблона|шаблон)\s+(.+))$/i);
         if (endNameMatch && endNameMatch[2]) {
           const cleanedName = cleanTemplateTitle(endNameMatch[2]);
@@ -1365,7 +1356,7 @@
       speakRu('Отличная работа! Все ритуалы завершены.', () => openAutoVoiceWindow5Sec());
     }
     function resetRoutine() {
-      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0;
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0; editingTaskIdx = -1;
       stopActiveRecognition(false);
       tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
       document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
@@ -1712,6 +1703,7 @@
       }; reader.readAsText(file);
     }
 
+    // ============ РЕДАКТИРОВАНИЕ КАРАНДАШОМ И ПЕРЕТАСКИВАНИЕ В ТЕКУЩЕМ СПИСКЕ ============
     function addTask() {
       const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
       if(!t) return;
@@ -1719,34 +1711,76 @@
       document.getElementById('newTaskTitle').value=''; saveTasks(); render();
     }
     function removeTask(i) {
+      if (editingTaskIdx === i) editingTaskIdx = -1;
+      else if (editingTaskIdx > i) editingTaskIdx--;
       if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
       tasks.splice(i, 1); saveTasks(); render();
     }
+    function startEditTask(i) {
+      editingTaskIdx = i;
+      renderTasksList();
+    }
+    function cancelEditTask() {
+      editingTaskIdx = -1;
+      renderTasksList();
+    }
+    function saveEditTask(i) {
+      if (!tasks[i]) return;
+      const titleEl = document.getElementById(`editTaskTitle_${i}`);
+      const minEl = document.getElementById(`editTaskMin_${i}`);
+      const newTitle = titleEl ? titleEl.value.trim() : tasks[i].title;
+      const newMin = minEl ? parseFloat(minEl.value) : tasks[i].min;
+      if (newTitle) tasks[i].title = newTitle.charAt(0).toUpperCase() + newTitle.slice(1);
+      if (!isNaN(newMin) && newMin >= 0.5) {
+        tasks[i].min = newMin;
+        tasks[i].originalMin = newMin;
+        tasks[i].compressedSec = null;
+      }
+      if (i === activeIdx) {
+        stepDurationSec = getStepTargetSec(i);
+      }
+      editingTaskIdx = -1;
+      saveTasks();
+      saveSession();
+      render();
+      showToast(`✏️ Обновлено: ${tasks[i].title} (${tasks[i].min} мин)`);
+    }
+
     function moveTask(fromIdx, toIdx) {
       if(fromIdx===toIdx || fromIdx<0 || toIdx<0 || fromIdx>=tasks.length || toIdx>=tasks.length) return;
+      const movedTitle = tasks[fromIdx].title;
       const [moved] = tasks.splice(fromIdx, 1); tasks.splice(toIdx, 0, moved);
       if(activeIdx >= 0 && activeIdx < tasks.length) {
         if(activeIdx === fromIdx) activeIdx = toIdx;
         else if(fromIdx < activeIdx && toIdx >= activeIdx) activeIdx--;
         else if(fromIdx > activeIdx && toIdx <= activeIdx) activeIdx++;
       }
-      saveTasks(); render(); vibrate(25);
+      saveTasks(); render(); vibrate([30, 40, 30]);
+      showToast(`⇅ «${movedTitle}» перемещено с ${fromIdx+1}-го на ${toIdx+1}-е место`);
     }
+
     function attachRowTouchHandlers(rowEl, idx) {
       rowEl.addEventListener('touchstart', e => {
-        if(e.target.closest('button') || e.touches.length!==1) return;
+        if(editingTaskIdx !== -1 || e.target.closest('button') || e.target.closest('input') || e.touches.length!==1) return;
         const touch = e.touches[0];
         dragState.startX = touch.clientX; dragState.startY = touch.clientY; dragState.fromIdx = idx; dragState.toIdx = idx; dragState.active = false;
         clearTimeout(dragState.timerId);
         dragState.timerId = setTimeout(() => {
-          dragState.active=true; vibrate(45); rowEl.classList.add('dragging');
-        }, 450);
+          dragState.active = true;
+          vibrate(50);
+          rowEl.classList.add('dragging-source');
+          const hint = document.getElementById('dragHintBar');
+          if (hint) hint.innerHTML = `<span class="text-sky-300 font-extrabold">⇅ Перетаскиваем пункт №${idx+1} «${esc(tasks[idx]?.title)}» — ведите вверх или вниз</span>`;
+        }, 380);
       }, {passive:true});
+
       rowEl.addEventListener('touchmove', e => {
         if(e.touches.length!==1) return;
         const touch = e.touches[0];
         if(!dragState.active) {
-          if(Math.abs(touch.clientX-dragState.startX)>12 || Math.abs(touch.clientY-dragState.startY)>12) { clearTimeout(dragState.timerId); dragState.timerId=null; }
+          if(Math.abs(touch.clientX-dragState.startX)>12 || Math.abs(touch.clientY-dragState.startY)>12) {
+            clearTimeout(dragState.timerId); dragState.timerId=null;
+          }
           return;
         }
         e.preventDefault();
@@ -1756,21 +1790,94 @@
           const rect = r.getBoundingClientRect(), dist = Math.abs(touch.clientY - (rect.top+rect.height/2));
           if(dist < minDist) { minDist = dist; closestIdx = rIdx; }
         });
-        dragState.toIdx = closestIdx;
-        rows.forEach((r,i) => { r.classList.remove('drop-target-top','drop-target-bottom'); if(i===closestIdx && i!==dragState.fromIdx) r.classList.add(closestIdx<dragState.fromIdx ? 'drop-target-top':'drop-target-bottom'); });
+        if (closestIdx !== dragState.toIdx) {
+          dragState.toIdx = closestIdx;
+          vibrate(15);
+        }
+        rows.forEach((r, i) => {
+          r.classList.remove('drop-target-active');
+          const badgeTo = r.querySelector('.drag-badge-to');
+          if (badgeTo) badgeTo.textContent = '';
+          if (i === closestIdx && i !== dragState.fromIdx) {
+            r.classList.add('drop-target-active');
+            if (badgeTo) badgeTo.textContent = `➔ Сюда (на №${i+1})`;
+          }
+        });
+        const hint = document.getElementById('dragHintBar');
+        if (hint) {
+          hint.innerHTML = closestIdx === dragState.fromIdx
+            ? `<span class="text-sky-300 font-extrabold">⇅ Откуда: №${dragState.fromIdx+1} — ведите палец на нужную строку</span>`
+            : `<span class="text-emerald-300 font-extrabold">⇅ Откуда: №${dragState.fromIdx+1} ➔ Куда: на место №${closestIdx+1}</span>`;
+        }
       }, {passive:false});
+
       const finishTouch = () => {
         clearTimeout(dragState.timerId); dragState.timerId=null;
         if(dragState.active) {
-          const from = dragState.fromIdx, to = dragState.toIdx; dragState.active=false;
-          document.querySelectorAll('#tasksContainer .task-row').forEach(r=>r.classList.remove('dragging','drop-target-top','drop-target-bottom'));
-          if(from!==to) moveTask(from,to);
+          const from = dragState.fromIdx, to = dragState.toIdx;
+          dragState.active = false;
+          document.querySelectorAll('#tasksContainer .task-row').forEach(r => r.classList.remove('dragging-source','drop-target-active'));
+          const hint = document.getElementById('dragHintBar');
+          if (hint) hint.innerHTML = `<span>Зажмите пункт (0.4 сек) для перетаскивания или нажмите ✎ для правки.</span>`;
+          if(from !== to) moveTask(from, to);
         }
       };
-      rowEl.addEventListener('touchend', finishTouch); rowEl.addEventListener('touchcancel', finishTouch);
+      rowEl.addEventListener('touchend', finishTouch);
+      rowEl.addEventListener('touchcancel', finishTouch);
     }
 
-    function render() {
+    // ============ ОТРИСОВКА СПИСКА ДЕЛ (НЕ СБРАСЫВАЕТСЯ КАЖДЫЕ 0.5 СЕК) ============
+    function renderTasksList() {
+      if (dragState.active) return; // Не трогаем DOM во время перетаскивания!
+      const container = document.getElementById('tasksContainer');
+      if (!container) return;
+
+      document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0)/60)} мин`;
+
+      container.innerHTML = tasks.map((t, i) => {
+        const isCur = i === activeIdx, isDone = i < activeIdx;
+        const oMin = t.originalMin || t.min, cSec = getStepTargetSec(i);
+        const liveExtra = t.addedSec ? ` <span class="text-emerald-300">(+${Math.round(t.addedSec/60)} мин)</span>` : '';
+        const b = (t.compressedSec != null && cSec < oMin * 60)
+          ? `<span class="line-through mr-1">${esc(oMin)} мин</span><span class="text-amber-300">→ ${(cSec/60).toFixed(1)} мин ⚡</span>${liveExtra}`
+          : `(${esc(oMin)} мин)${liveExtra}`;
+
+        if (editingTaskIdx === i) {
+          return `
+            <div class="task-row flex items-center gap-1.5 py-2 px-2 bg-slate-800/95 rounded-xl border border-sky-400">
+              <span class="text-xs font-bold text-sky-300">${i+1}.</span>
+              <input id="editTaskTitle_${i}" type="text" value="${esc(t.title)}"
+                class="flex-1 bg-slate-950 text-white border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-sky-400" />
+              <input id="editTaskMin_${i}" type="number" value="${esc(t.min)}" min="0.5" step="0.5"
+                class="w-16 bg-slate-950 text-sky-300 border border-slate-600 rounded-lg px-2 py-1.5 text-sm font-bold text-center tabular-nums" />
+              <button type="button" onclick="saveEditTask(${i})" class="px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs">✓</button>
+              <button type="button" onclick="cancelEditTask()" class="px-2 py-1.5 rounded-lg bg-slate-700 text-slate-300 font-bold text-xs">✕</button>
+            </div>
+          `;
+        }
+
+        return `
+          <div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded-xl':''} ${isDone?'line-through text-slate-500':''}">
+            <div class="flex items-center gap-2 truncate pr-1">
+              <span class="text-slate-400 text-sm cursor-grab px-0.5">⋮⋮</span>
+              <span class="truncate">${i+1}. ${esc(t.title)}</span>
+              <span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span>
+              <span class="drag-badge drag-badge-from ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500 text-slate-950">⇅ Откуда</span>
+              <span class="drag-badge drag-badge-to ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-400 text-slate-950"></span>
+            </div>
+            <div class="flex items-center gap-0.5 flex-shrink-0">
+              <button type="button" onclick="startEditTask(${i})" title="Изменить название и время" class="text-sky-300 hover:text-sky-200 px-2 font-bold row-btn">✎</button>
+              <button type="button" onclick="removeTask(${i})" title="Удалить" class="text-rose-400 hover:text-rose-300 px-2 font-bold row-btn">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      document.querySelectorAll('#tasksContainer .task-row').forEach((r, i) => attachRowTouchHandlers(r, i));
+    }
+
+    // Обновление только часов, таймера и верхних индикаторов (вызывается каждые 500 мс)
+    function updateClockAndTimerUI() {
       try {
         const now = new Date();
         document.getElementById('clockNow').textContent = now.toTimeString().slice(0,8);
@@ -1823,25 +1930,19 @@
         } else {
           document.getElementById('stepCounter').textContent = 'Отличная работа!'; document.getElementById('currentTaskName').textContent = 'Все ритуалы завершены 🎉';
           tDisp.textContent = '00:00'; pBar.style.width = '0%';
-          document.getElementById('mainBtnTitle').textContent = '🔄 ЗАНОВО'; document.getElementById('mainBtnSub').textContent = 'Посмотреть сводку';
+          document.getElementById('mainBtnTitle').textContent = '🔄 ЗАНОВО'; document.getElementById('mainBtnSub').textContent = 'Запустить утреннюю цепочку с начала';
           mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
         }
-
-        document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0)/60)} мин`;
-        document.getElementById('tasksContainer').innerHTML = tasks.map((t,i) => {
-          const isCur = i===activeIdx, isDone = i<activeIdx;
-          const oMin = t.originalMin||t.min, cSec = getStepTargetSec(i);
-          const liveExtra = t.addedSec ? ` <span class="text-emerald-300">(+${Math.round(t.addedSec/60)} мин)</span>` : '';
-          const b = (t.compressedSec!=null && cSec<oMin*60)
-            ? `<span class="line-through mr-1">${esc(oMin)} мин</span><span class="text-amber-300">→ ${(cSec/60).toFixed(1)} мин ⚡</span>${liveExtra}`
-            : `(${esc(oMin)} мин)${liveExtra}`;
-          return `<div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded':''} ${isDone?'line-through text-slate-500':''}"><div class="flex items-center gap-2 truncate"><span class="text-slate-500 text-xs">⋮⋮</span><span class="truncate">${i+1}. ${esc(t.title)}</span><span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span></div><button type="button" onclick="removeTask(${i})" class="text-rose-400 px-2 font-bold row-btn">✕</button></div>`;
-        }).join('');
-        document.querySelectorAll('#tasksContainer .task-row').forEach((r,i) => attachRowTouchHandlers(r,i));
       } catch (err) {
         const vs = document.getElementById('voiceStatus');
         if (vs) vs.textContent = `Ошибка отрисовки: ${err.message}`;
       }
+    }
+
+    // Полная перерисовка (вызывается при изменении задач, шага или настроек)
+    function render() {
+      updateClockAndTimerUI();
+      renderTasksList();
     }
 
     setInterval(() => {
@@ -1874,7 +1975,7 @@
           }
         }
       }
-      render();
+      updateClockAndTimerUI();
     }, 500);
 
     try {
