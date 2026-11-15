@@ -176,7 +176,7 @@
       <div class="space-y-1">
         <button type="button" id="voiceCmdBtn" onclick="toggleVoiceCommand()"
           class="w-full py-2.5 px-3 rounded-xl bg-sky-500/10 border border-sky-500/50 text-sky-400 font-extrabold text-xs sm:text-sm active:scale-95 transition flex items-center justify-center gap-2">
-          🎙 Микрофон (нажмите для диктовки, повтор — применить)
+          🎙 Микрофон (авто-стоп через 3 сек тишины или повторный тап)
         </button>
         <div id="voiceStatus" class="text-[11px] text-slate-300 text-center min-h-[16px]"></div>
       </div>
@@ -214,6 +214,14 @@
 
         <input type="text" id="constructorNameInput" placeholder="Название шаблона (например, Утро будни)..."
           class="w-full bg-slate-950 text-white border border-slate-600 rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:border-sky-400" />
+
+        <div class="space-y-1">
+          <button type="button" id="constructorVoiceBtn" onclick="toggleConstructorVoice()"
+            class="w-full py-2 px-3 rounded-xl bg-indigo-500/15 border border-indigo-400/50 text-indigo-300 font-bold text-xs active:scale-95 transition flex items-center justify-center gap-2">
+            🎙 Надиктовать список дел в шаблон
+          </button>
+          <div id="constructorVoiceStatus" class="text-[11px] text-slate-400 text-center min-h-[14px]"></div>
+        </div>
 
         <div id="constructorTasksList" class="space-y-1.5"></div>
 
@@ -321,16 +329,16 @@
     let constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
 
     let stepDurationSec = 0, stepElapsedSec = 0;
-    let wakeLock = null, audioCtx = null, keepAliveOsc = null, keepAliveGain = null, keepAliveActive = false, silentWavUrl = null;
+    let wakeLock = null, audioCtx = null, keepAliveActive = false, silentWavUrl = null;
     let dragState = { timerId: null, startX: 0, startY: 0, fromIdx: -1, toIdx: -1, active: false };
 
     // Состояние голосового движка
     let activeRecognition = null;
-    let isManualRecording = false;
-    let isAutoWindowListening = false;
+    let voiceMode = null; // 'main' | 'constructor' | 'auto' | null
+    let silenceTimer = null;
     let autoWindowTimer = null;
     let recognizedInCurrentWindow = false;
-    let manualTranscriptBuffer = [];
+    let transcriptBuffer = [];
 
     function saveSession() {
       const s = {
@@ -507,7 +515,7 @@
       return { compressed:true, lateMin };
     }
 
-    // ============ ГОЛОСОВОЙ ВВОД И АДАПТИВНОЕ ОКНО 5 СЕК ============
+    // ============ ГОЛОСОВОЙ ВВОД, 3 СЕК ТИШИНЫ И КОНСТРУКТОР ============
     function parseNumberToken(raw) {
       if (!raw) return null;
       const s = raw.toLowerCase().replace(/ё/g, 'е').trim();
@@ -563,6 +571,10 @@
       const q = query.toLowerCase().replace(/ё/g, 'е').trim();
       if (/текущ|этот|этап|шаг|пункт/.test(q) && activeIdx >= 0 && activeIdx < tasks.length) {
         return activeIdx;
+      }
+      const numPos = parsePositionToken(q);
+      if (numPos !== null && numPos >= 1 && numPos <= tasks.length && /^(пункт|шаг|дело|номер)?\s*\d+/.test(q)) {
+        return numPos - 1;
       }
       let bestIdx = -1;
       let bestScore = 0;
@@ -624,6 +636,27 @@
       saveSession();
       render();
       showToast(`⏱ ${tasks[idx].title}: задано ${clamped} мин`);
+    }
+
+    function swapTasksByQuery(partA, partB) {
+      if (!partA || !partB || tasks.length < 2) return false;
+      const idxA = findTaskIndexByName(partA);
+      const idxB = findTaskIndexByName(partB);
+      if (idxA < 0 || idxB < 0 || idxA === idxB) return false;
+
+      const temp = tasks[idxA];
+      tasks[idxA] = tasks[idxB];
+      tasks[idxB] = temp;
+
+      if (activeIdx === idxA) activeIdx = idxB;
+      else if (activeIdx === idxB) activeIdx = idxA;
+
+      saveTasks();
+      saveSession();
+      render();
+      vibrate(30);
+      showToast(`⇄ Поменял местами: «${tasks[idxB].title}» и «${tasks[idxA].title}»`);
+      return true;
     }
 
     function interpretSinglePhrase(rawPhrase) {
@@ -697,9 +730,19 @@
         return true;
       }
 
-      // 7. Правка времени: «накинь пару минут», «плюс 3 минуты», «убавь 2», «сократи еду на 3», «сделай душ на 7»
+      // 7. Поменять местами: «поменяй местами душ и зарядку», «поменяй 2 и 4»
+      const swapMatch = text.match(/поменяй\s+(?:местами\s+)?(.+?)\s+и\s+(.+)$/i);
+      if (swapMatch) {
+        const ok = swapTasksByQuery(swapMatch[1].trim(), swapMatch[2].trim());
+        if (ok) {
+          speakRu('Поменял местами');
+          return true;
+        }
+      }
+
+      // 8. Правка времени: «накинь пару минут», «сократи еду на 3», «сделай душ на 7»
       const deltaMatch = text.match(/(?:накинь|добавь|плюс|\+|дай|убавь|минус|\-|срежь|сократи|урежь|уменьши)\s*(.+)$/i);
-      if (deltaMatch) {
+      if (deltaMatch && !/пункт|место|шаг/.test(text)) {
         const rest = deltaMatch[1].trim();
         const isMinus = /убавь|минус|\-|срежь|сократи|урежь|уменьши/.test(text);
         const numMatch = rest.match(/((?:полтор\w*|полчас\w*|пар\w*|\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м|секунд\w*|сек)?)/i);
@@ -731,10 +774,13 @@
         }
       }
 
-      // 8. Удаление дела
+      // 9. Удаление дела: «удали одеться и выйти 5 минут», «удали душ»
       if (/убери|удали|вычеркни|снеси/.test(text)) {
-        const targetPart = text.replace(/.*?(?:убери|удали|вычеркни|снеси)\s+/i, '').trim();
-        const targetIdx = findTaskIndexByName(targetPart);
+        const cleanedTarget = text
+          .replace(/.*?(?:убери|удали|вычеркни|снеси)\s+/i, '')
+          .replace(/\s+\d+(?:[.,]\d+)?\s*(?:минут\w*|мин|м)?$/i, '')
+          .trim();
+        const targetIdx = findTaskIndexByName(cleanedTarget);
         if (targetIdx >= 0 && targetIdx < tasks.length) {
           const removedTitle = tasks[targetIdx].title;
           removeTask(targetIdx);
@@ -751,12 +797,29 @@
         }
       }
 
-      // 9. Добавление дела (с позицией или в конец)
-      if (/добавь|впиши|закинь/.test(text)) {
-        const posMatch = text.match(/(?:добавь|впиши|закинь)\s+([а-яa-z0-9\-]+)\s+(?:пунктом|местом|делом|шагом)?\s*(.+)$/i);
-        if (posMatch) {
-          const posToken = posMatch[1];
-          const rest = posMatch[2].trim();
+      // 10. Добавление дела: «добавь то-то столько-то минут таким-то пунктом», «добавь седьмым пунктом...», или без слова «добавь»
+      const hasAddVerb = /^(?:добавь|впиши|закинь)\b/i.test(text);
+      const hasMinUnit = /\b(?:\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин)\b/i.test(text);
+      if (hasAddVerb || hasMinUnit) {
+        const withoutVerb = text.replace(/^(?:добавь|впиши|закинь)\s+/i, '').trim();
+
+        // Вариант А: позиция в конце — «одеться и выйти 5 минут седьмым пунктом» / «... 7 пункт» / «... в конец»
+        const endPosMatch = withoutVerb.match(/^(.+?)(?:,?\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м)?)?\s*,?\s+(?:(последним|последний)|([а-яa-z0-9\-]+)\s*(?:пунктом|пункт|местом|место|делом|дело|шагом|шаг)?)\s*$/i);
+        if (endPosMatch && (endPosMatch[3] || endPosMatch[4])) {
+          const rawTitle = endPosMatch[1].replace(/\s+(?:на|в|по)\s*$/i, '').trim();
+          const minVal = endPosMatch[2] ? parseNumberToken(endPosMatch[2]) : 5;
+          const posVal = endPosMatch[3] ? (tasks.length + 1) : parsePositionToken(endPosMatch[4]);
+          if (rawTitle && posVal !== null) {
+            insertTaskAt(posVal, rawTitle, minVal !== null ? minVal : 5);
+            return true;
+          }
+        }
+
+        // Вариант Б: позиция сразу после глагола — «седьмым пунктом одеться и выйти 5 минут»
+        const startPosMatch = withoutVerb.match(/^([а-яa-z0-9\-]+)\s+(?:пунктом|пункт|местом|место|делом|дело|шагом|шаг)\s+(.+)$/i);
+        if (startPosMatch) {
+          const posToken = startPosMatch[1];
+          const rest = startPosMatch[2].trim();
           const parsedPos = (posToken === 'последним' || posToken === 'последний')
             ? tasks.length + 1
             : parsePositionToken(posToken);
@@ -778,17 +841,20 @@
           }
         }
 
-        const simpleMatch = text.match(/(?:добавь|впиши|закинь)\s+(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+))?\s*(?:минут\w*|мин)?$/i);
+        // Вариант В: простое добавление — «одеться и выйти 5 минут» / «добавь воду 2»
+        const simpleMatch = withoutVerb.match(/^(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+))?\s*(?:минут\w*|мин)?$/i);
         if (simpleMatch) {
-          const title = simpleMatch[1].trim();
+          const title = simpleMatch[1].replace(/\s+(?:на|в|по)\s*$/i, '').trim();
           const parsedMin = simpleMatch[2] ? parseNumberToken(simpleMatch[2]) : null;
           const min = parsedMin !== null ? parsedMin : 5;
-          const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
-          tasks.push({ title: capTitle, min, originalMin: min, compressedSec: null, addedSec: 0 });
-          saveTasks(); render();
-          speakRu(`Добавлено ${capTitle}, ${min} минут`);
-          showToast(`＋ Добавлено: ${capTitle} (${min} мин)`);
-          return true;
+          if (title) {
+            const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
+            tasks.push({ title: capTitle, min, originalMin: min, compressedSec: null, addedSec: 0 });
+            saveTasks(); render();
+            speakRu(`Добавлено ${capTitle}, ${min} минут`);
+            showToast(`＋ Добавлено: ${capTitle} (${min} мин)`);
+            return true;
+          }
         }
       }
 
@@ -798,7 +864,7 @@
     function parseVoiceChain(fullText) {
       const parts = fullText
         .replace(/ё/g, 'е')
-        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=добавь|удали|убери|сделай|накинь|убавь|сократи|пауза|дальше|готово))/i)
+        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=добавь|удали|убери|сделай|накинь|убавь|сократи|поменяй|пауза|дальше|готово))/i)
         .map(s => s.trim())
         .filter(Boolean);
 
@@ -811,89 +877,167 @@
       return anyRecognized;
     }
 
-    function stopActiveRecognition() {
+    function parseConstructorVoiceDictation(fullText) {
+      const chunks = fullText
+        .replace(/ё/g, 'е')
+        .split(/(?:,\s*|\s+и\s+|\s+потом\s+|\s+затем\s+)/i)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      let addedCount = 0;
+      chunks.forEach(chunk => {
+        const cleaned = chunk.replace(/^(?:добавь|впиши|закинь|пункт\s*\d+\s*)\s*/i, '').trim();
+        if (!cleaned) return;
+        const m = cleaned.match(/^(.+?)(?:\s+(?:на\s+)?(\d+(?:[.,]\d+)?|[а-я]+))?\s*(?:минут\w*|мин|м)?$/i);
+        if (!m) return;
+        const titleRaw = m[1].replace(/\s+(?:на|в|по)\s*$/i, '').trim();
+        if (!titleRaw) return;
+        const parsedMin = m[2] ? parseNumberToken(m[2]) : null;
+        const min = parsedMin !== null ? parsedMin : 5;
+        constructorDraftTasks.push({
+          title: titleRaw.charAt(0).toUpperCase() + titleRaw.slice(1),
+          min
+        });
+        addedCount++;
+      });
+
+      if (addedCount > 0) {
+        renderConstructor();
+        showToast(`🎙 Добавлено в шаблон пунктов: ${addedCount}`);
+      }
+      return addedCount > 0;
+    }
+
+    function stopActiveRecognition(applyPending = false) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
       clearTimeout(autoWindowTimer);
       autoWindowTimer = null;
-      isAutoWindowListening = false;
-      const btnEl = document.getElementById('voiceCmdBtn');
-      if (btnEl) btnEl.classList.remove('mic-active');
+
+      const prevMode = voiceMode;
+      const joined = transcriptBuffer.join(' ').trim();
+      transcriptBuffer = [];
+      voiceMode = null;
+
+      const mainBtn = document.getElementById('voiceCmdBtn');
+      const ctorBtn = document.getElementById('constructorVoiceBtn');
+      if (mainBtn) mainBtn.classList.remove('mic-active');
+      if (ctorBtn) ctorBtn.classList.remove('mic-active');
+
       if (activeRecognition) {
         const rec = activeRecognition;
         activeRecognition = null;
         try { rec.onend = null; rec.onerror = null; rec.onresult = null; rec.stop(); } catch(e){}
       }
-    }
 
-    function toggleVoiceCommand() {
-      if (isManualRecording) {
-        isManualRecording = false;
-        const joined = manualTranscriptBuffer.join(' ').trim();
-        manualTranscriptBuffer = [];
-        stopActiveRecognition();
-        const statusEl = document.getElementById('voiceStatus');
-        if (joined) {
+      if (applyPending && joined) {
+        if (prevMode === 'constructor') {
+          const ok = parseConstructorVoiceDictation(joined);
+          const ctorStatus = document.getElementById('constructorVoiceStatus');
+          if (ctorStatus) ctorStatus.textContent = ok ? `Добавлено: «${joined}»` : `Не распознано: «${joined}»`;
+          setTimeout(() => { if (ctorStatus) ctorStatus.textContent = ''; }, 3000);
+        } else {
+          const statusEl = document.getElementById('voiceStatus');
           if (statusEl) statusEl.textContent = `Применяю: «${joined}»`;
           const ok = parseVoiceChain(joined);
-          if (!ok) showToast('🎙 Команда не распознана');
-        } else if (statusEl) {
-          statusEl.textContent = '';
+          if (!ok) showToast('⚠️ Команда не распознана');
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
         }
+      }
+    }
+
+    function resetSilenceTimer(ms = 3000) {
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (voiceMode === 'main' || voiceMode === 'constructor') {
+          stopActiveRecognition(true);
+        }
+      }, ms);
+    }
+
+    function startSpeechSession(mode) {
+      if (voiceMode === mode) {
+        stopActiveRecognition(true);
         return;
       }
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const statusEl = document.getElementById('voiceStatus');
-      const btnEl = document.getElementById('voiceCmdBtn');
+      const isCtor = mode === 'constructor';
+      const statusEl = document.getElementById(isCtor ? 'constructorVoiceStatus' : 'voiceStatus');
+      const btnEl = document.getElementById(isCtor ? 'constructorVoiceBtn' : 'voiceCmdBtn');
+
       if (!SpeechRecognition) {
         if (statusEl) statusEl.textContent = 'Голосовой ввод недоступен в этом окне. Откройте в Google Chrome.';
         showToast('🎙 Откройте приложение в Google Chrome для доступа к микрофону');
         return;
       }
 
-      stopActiveRecognition();
-      isManualRecording = true;
-      manualTranscriptBuffer = [];
+      stopActiveRecognition(false);
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
+
+      voiceMode = mode;
+      transcriptBuffer = [];
       if (btnEl) btnEl.classList.add('mic-active');
-      if (statusEl) statusEl.textContent = '🎙 Диктовка идёт... Нажмите кнопку ещё раз, чтобы применить';
+      if (statusEl) statusEl.textContent = isCtor
+        ? '🎙 Диктуйте дела и минуты (авто-стоп через 3 сек тишины)...'
+        : '🎙 Слушаю команду (авто-стоп через 3 сек тишины)...';
 
       const rec = new SpeechRecognition();
       rec.lang = 'ru-RU';
-      rec.continuous = true;
+      rec.continuous = false;
       rec.interimResults = false;
       activeRecognition = rec;
+
+      resetSilenceTimer(5000);
 
       rec.onresult = (event) => {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             const chunk = event.results[i][0].transcript.trim();
             if (chunk) {
-              manualTranscriptBuffer.push(chunk);
-              if (statusEl) statusEl.textContent = `🎙 Записано: «${manualTranscriptBuffer.join(' ')}»`;
+              transcriptBuffer.push(chunk);
+              if (statusEl) statusEl.textContent = `🎙 Записано: «${transcriptBuffer.join(' ')}»`;
+              resetSilenceTimer(3000);
             }
           }
         }
       };
-      rec.onerror = () => {
-        if (isManualRecording && statusEl) statusEl.textContent = 'Ошибка микрофона или нет доступа';
+      rec.onerror = (event) => {
+        const errCode = event && event.error ? ` (${event.error})` : '';
+        if (statusEl) statusEl.textContent = `Ошибка микрофона или нет доступа${errCode}`;
+        stopActiveRecognition(false);
       };
       rec.onend = () => {
-        if (isManualRecording && activeRecognition === rec) {
-          try { rec.start(); } catch(e){}
+        if (voiceMode === mode && activeRecognition === rec) {
+          stopActiveRecognition(true);
         }
       };
-      try { rec.start(); } catch(e){}
+
+      try { rec.start(); } catch(e) {
+        if (statusEl) statusEl.textContent = 'Не удалось запустить микрофон';
+        stopActiveRecognition(false);
+      }
+    }
+
+    function toggleVoiceCommand() {
+      startSpeechSession('main');
+    }
+    function toggleConstructorVoice() {
+      startSpeechSession('constructor');
     }
 
     function openAutoVoiceWindow5Sec() {
       if (document.getElementById('silentModeToggle').checked) return;
       if (!document.getElementById('autoVoiceWindowToggle').checked) return;
-      if (isManualRecording) return;
+      if (voiceMode === 'main' || voiceMode === 'constructor') return;
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) return;
 
-      stopActiveRecognition();
-      isAutoWindowListening = true;
+      stopActiveRecognition(false);
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
+
+      voiceMode = 'auto';
       recognizedInCurrentWindow = false;
       const statusEl = document.getElementById('voiceStatus');
       const btnEl = document.getElementById('voiceCmdBtn');
@@ -902,13 +1046,13 @@
 
       const rec = new SpeechRecognition();
       rec.lang = 'ru-RU';
-      rec.continuous = true;
+      rec.continuous = false;
       rec.interimResults = false;
       activeRecognition = rec;
 
       autoWindowTimer = setTimeout(() => {
         if (!recognizedInCurrentWindow) {
-          stopActiveRecognition();
+          stopActiveRecognition(false);
           if (statusEl) statusEl.textContent = '';
         }
       }, 5000);
@@ -923,37 +1067,35 @@
             if (matched) {
               recognizedInCurrentWindow = true;
               clearTimeout(autoWindowTimer);
-              autoWindowTimer = null;
-              // Держим открытым, пока человек договаривает; закрываем через 1.5 сек после последней знакомой фразы
               autoWindowTimer = setTimeout(() => {
-                stopActiveRecognition();
+                stopActiveRecognition(false);
                 if (statusEl) statusEl.textContent = '';
-              }, 1500);
+              }, 3000);
             } else {
-              // Незнакомая фраза — закрываем окно без сбоя таймера
-              stopActiveRecognition();
+              stopActiveRecognition(false);
               if (statusEl) statusEl.textContent = '';
             }
           }
         }
       };
       rec.onerror = () => {
-        stopActiveRecognition();
+        stopActiveRecognition(false);
         if (statusEl) statusEl.textContent = '';
       };
       rec.onend = () => {
-        if (isAutoWindowListening && activeRecognition === rec) {
-          try { rec.start(); } catch(e){}
+        if (voiceMode === 'auto' && activeRecognition === rec) {
+          stopActiveRecognition(false);
+          if (statusEl) statusEl.textContent = '';
         }
       };
 
-      try { rec.start(); } catch(e){ stopActiveRecognition(); }
+      try { rec.start(); } catch(e){ stopActiveRecognition(false); }
     }
 
     // ============ УПРАВЛЕНИЕ ШАГАМИ ============
     function handleMainBtn() {
       vibrate(30);
-      stopActiveRecognition();
+      stopActiveRecognition(false);
       if (activeIdx === -1 || activeIdx >= tasks.length) {
         if (tasks.length === 0) { showToast('⚠️ Добавьте задачи!'); return; }
         savedSec = 0; routineStats = []; paused = false; lastOvertimeWarnMin = 0;
@@ -997,7 +1139,7 @@
     function skipStep() {
       if (activeIdx === -1 || activeIdx >= tasks.length) return;
       vibrate(30);
-      stopActiveRecognition();
+      stopActiveRecognition(false);
       routineStats.push({
         title: tasks[activeIdx].title,
         plannedSec: Math.round(tasks[activeIdx].min * 60),
@@ -1028,7 +1170,7 @@
     }
     function finishRoutine() {
       activeIdx = tasks.length; document.body.className = 'pb-16';
-      stopActiveRecognition();
+      stopActiveRecognition(false);
       playBeep(880,0.15,3); vibrate([100,50,100]);
       disableKeepAlive();
 
@@ -1055,7 +1197,7 @@
     }
     function resetRoutine() {
       activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0;
-      stopActiveRecognition();
+      stopActiveRecognition(false);
       tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
       document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
       disableKeepAlive(); clearSession(); render();
@@ -1086,16 +1228,11 @@
               ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300">-${fmtSec(Math.abs(diff))}</span>`
               : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300">+${fmtSec(diff)}</span>`);
 
-        // Формируем совет по шагу
         let suggestedMin = Math.max(0.5, Math.round((s.plannedSec / 60) * 2) / 2);
-        let hintText = 'Без изменений';
         if (!s.skipped) {
           const rawTargetMin = Math.max(0.5, Math.round((s.actualSec / 60) * 2) / 2);
           const deltaMin = +(rawTargetMin - suggestedMin).toFixed(1);
-          if (Math.abs(deltaMin) >= 0.5) {
-            suggestedMin = rawTargetMin;
-            hintText = deltaMin > 0 ? `+${deltaMin} мин в шаблон` : `${deltaMin} мин в шаблон`;
-          }
+          if (Math.abs(deltaMin) >= 0.5) suggestedMin = rawTargetMin;
         }
         pendingSuggestions.push({
           idx: i,
