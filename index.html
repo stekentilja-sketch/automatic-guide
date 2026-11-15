@@ -688,7 +688,7 @@
 
     function cleanNoisePrefix(str) {
       return str
-        .replace(/^(?:добавь|впиши|закинь|о\s+да|да|ну|так|вот|на)\s+/gi, '')
+        .replace(/^(?:добавь|впиши|закинь|о\s+да|да|ну|так|вот|на|и)\s+/gi, '')
         .replace(/\s+(?:на|в|по|о\s+да)$/gi, '')
         .trim();
     }
@@ -697,10 +697,10 @@
       const normalized = rawText.toLowerCase().replace(/ё/g, 'е').replace(/[.,!?]+$/g, '').trim();
       if (!normalized) return 0;
 
-      // Разбиваем по запятым, союзам или границе «<число> минут <следующее дело>»
+      // Разбиваем по запятым, союзам ИЛИ сразу после «<число> минут/минуты/минуту/мин/м» перед следующим словом
       const segmented = normalized
-        .replace(/(\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м)\s+(?:и\s+)?(?=(?:добавь|впиши|закинь|о\s+да\s+)?[а-яa-z])/gi, '$1 минут | ')
-        .split(/(?:\s*\|\s*|,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+)/i)
+        .replace(/(\d+(?:[.,]\d+)?|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двенадцать|пятнадцать|двадцать|тридцать|полтора|полчаса|пару)\s*(?:минут[ауы]?|мин|м)\s+(?:и\s+)?(?=(?:добавь|впиши|закинь|о\s+да\s+)?[а-яa-z])/gi, '$1 минут | ')
+        .split(/(?:\s*\|\s*|,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+а также\s+)/i)
         .map(s => s.trim())
         .filter(Boolean);
 
@@ -708,7 +708,8 @@
       segmented.forEach(seg => {
         const cleaned = cleanNoisePrefix(seg);
         if (!cleaned || cleaned.length < 2) return;
-        const minMatch = cleaned.match(/^(?:(.+?)\s+)?(?:на\s+)?(\d+(?:[.,]\d+)?|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двенадцать|пятнадцать|двадцать|тридцать|полтора|полчаса|пару)\s*(?:минут\w*|мин|м)?$/i);
+
+        const minMatch = cleaned.match(/^(?:(.+?)\s+)?(?:на\s+)?(\d+(?:[.,]\d+)?|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двенадцать|пятнадцать|двадцать|тридцать|полтора|полчаса|пару)\s*(?:минут[ауы]?|мин|м)?$/i);
         if (minMatch && minMatch[1]) {
           const titleClean = cleanNoisePrefix(minMatch[1]);
           const parsedMin = parseNumberToken(minMatch[2]);
@@ -724,7 +725,7 @@
             return;
           }
         }
-        // Если без минут — добавляем с 5 мин
+
         if (!/^(?:добавь|впиши|закинь|о|да)$/i.test(cleaned)) {
           targetArray.push({
             title: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
@@ -816,12 +817,12 @@
       if (deltaMatch && !/пункт|место|шаг/.test(text)) {
         const rest = deltaMatch[1].trim();
         const isMinus = /убавь|минус|\-|срежь|сократи|урежь|уменьши/.test(text);
-        const numMatch = rest.match(/((?:полтор\w*|полчас\w*|пар\w*|\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут\w*|мин|м|секунд\w*|сек)?)(?:$|\s)/i);
+        const numMatch = rest.match(/((?:полтор\w*|полчас\w*|пар\w*|\d+(?:[.,]\d+)?|[а-я]+)\s*(?:минут[ауы]?|мин|м|секунд[ауы]?|сек)?)(?:$|\s)/i);
         const numVal = numMatch ? parseNumberToken(numMatch[1]) : null;
         if (numVal !== null) {
           const isSec = /сек/.test(numMatch[1]);
           const deltaSec = Math.round((isSec ? numVal : numVal * 60) * (isMinus ? -1 : 1));
-          const titlePart = rest.replace(numMatch[1], '').replace(/(?:^|\s)(на|к|из|для|шаг|дело|пункт|время|минут\w*|мин)(?:$|\s)/gi, ' ').trim();
+          const titlePart = rest.replace(numMatch[1], '').replace(/(?:^|\s)(на|к|из|для|шаг|дело|пункт|время|минут[ауы]?|мин)(?:$|\s)/gi, ' ').trim();
           const targetIdx = titlePart ? findTaskIndexByName(titlePart) : activeIdx;
           if (targetIdx >= 0 && targetIdx < tasks.length) {
             adjustTaskDurationSec(targetIdx, deltaSec, isMinus ? '(сокращено голосом)' : '(добавлено голосом)');
@@ -834,7 +835,7 @@
       if (/убери|удали|вычеркни|снеси/.test(text)) {
         const cleanedTarget = text
           .replace(/.*?(?:убери|удали|вычеркни|снеси)\s+/i, '')
-          .replace(/\s+\d+(?:[.,]\d+)?\s*(?:минут\w*|мин|м)?$/i, '')
+          .replace(/\s+\d+(?:[.,]\d+)?\s*(?:минут[ауы]?|мин|м)?$/i, '')
           .trim();
         const targetIdx = findTaskIndexByName(cleanedTarget);
         if (targetIdx >= 0 && targetIdx < tasks.length) {
@@ -853,7 +854,6 @@
         }
       }
 
-      // Добавление дел (одиночных или списком)
       const addedCount = extractTaskItemsFromText(text, tasks);
       if (addedCount > 0) {
         saveTasks();
@@ -1458,273 +1458,3 @@
       let cutoff = 0;
       if (days !== 'all') cutoff = Date.now() - (parseInt(days, 10) * 24 * 60 * 60 * 1000);
       const filtered = journal.filter(j => j.date >= cutoff);
-
-      if (filtered.length === 0) {
-        chart.innerHTML = '<div class="text-xs text-slate-500 w-full text-center pb-4">Нет данных за этот период</div>';
-        tips.innerHTML = 'Соберите статистику завершённых дней, чтобы получить советы.';
-        return;
-      }
-
-      const toShow = filtered.slice(-15);
-      chart.innerHTML = toShow.map(j => {
-        const pct = Math.min(100, Math.max(10, (j.totalActual / Math.max(1, j.totalPlan)) * 50));
-        const color = j.totalActual > j.totalPlan ? 'bg-rose-500' : 'bg-emerald-500';
-        return `<div class="w-full mx-0.5 rounded-t-sm chart-bar ${color}" style="height:${pct}%" title="${new Date(j.date).toLocaleDateString()}"></div>`;
-      }).join('');
-
-      const taskFails = {};
-      filtered.forEach(j => {
-        (j.stats || []).forEach(s => {
-          if (s.skipped) return;
-          const plan = s.plannedSec + (s.liveAdjSec || 0);
-          const over = s.actualSec - plan;
-          if (over > 0) taskFails[s.title] = (taskFails[s.title] || []).concat(over);
-        });
-      });
-      let worstTask = null, maxAvg = 0;
-      for (const t in taskFails) {
-        const avg = taskFails[t].reduce((a, b) => a + b, 0) / taskFails[t].length;
-        if (avg > maxAvg) { maxAvg = avg; worstTask = t; }
-      }
-      if (worstTask && maxAvg > 60) {
-        tips.innerHTML = `💡 Чаще всего вы теряете время на шаге <b>«${worstTask}»</b> (в среднем перерасход +${Math.round(maxAvg/60)} мин). Примените совет в сводке или увеличьте план в конструкторе.`;
-      } else {
-        tips.innerHTML = '🔥 Вы отлично справляетесь! Критических просадок по времени не обнаружено.';
-      }
-    }
-
-    function renderTemplates() {
-      const cont = document.getElementById('templatesList');
-      if (!cont) return;
-      cont.innerHTML = customTemplates.map((t, i) => {
-        const isSelected = i === activeTemplateIdx;
-        return `
-          <div class="flex items-center bg-slate-800 border ${isSelected ? 'border-sky-400' : 'border-slate-600'} rounded-xl overflow-hidden text-xs">
-            <button type="button" onclick="selectTemplate(${i})" class="px-3 py-2 text-white hover:bg-slate-700 font-bold">${isSelected ? '✓ ' : ''}${t.name}</button>
-            <button type="button" onclick="openTemplateConstructor(${i})" title="Редактировать" class="px-2 py-2 text-sky-300 hover:bg-slate-700 border-l border-slate-600">✎</button>
-            <button type="button" onclick="deleteTemplate(${i})" title="Удалить" class="px-2 py-2 text-rose-400 hover:bg-rose-950 border-l border-slate-600">✕</button>
-          </div>
-        `;
-      }).join('');
-    }
-    function selectTemplate(idx) {
-      if (activeIdx > -1 && activeIdx < tasks.length) {
-        if (!confirm('Прервать текущую цепочку и загрузить выбранный шаблон?')) return;
-      }
-      activeTemplateIdx = idx;
-      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
-      tasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
-      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
-      openTemplateConstructor(idx);
-      resetRoutine();
-      renderTemplates();
-      showToast(`📂 Выбран: ${customTemplates[idx].name}`);
-    }
-    function deleteTemplate(idx) {
-      if (customTemplates.length <= 1) { showToast('⚠️ Должен остаться хотя бы один шаблон'); return; }
-      if (confirm('Удалить шаблон?')) {
-        customTemplates.splice(idx, 1);
-        if (activeTemplateIdx >= customTemplates.length) activeTemplateIdx = customTemplates.length - 1;
-        localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
-        openTemplateConstructor(activeTemplateIdx);
-        renderTemplates();
-      }
-    }
-
-    function exportData() {
-      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null) };
-      const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
-    }
-    function importData(e) {
-      const file = e.target.files[0]; if(!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => {
-        try {
-          const data = JSON.parse(ev.target.result);
-          if(data.templates) localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
-          if(data.journal) localStorage.setItem('m_journal', JSON.stringify(data.journal));
-          if(data.session) localStorage.setItem('m_active_session', JSON.stringify(data.session));
-          alert('Импорт успешен! Страница будет перезагружена.'); location.reload();
-        } catch(err) { alert('Ошибка чтения файла!'); }
-      }; reader.readAsText(file);
-    }
-
-    function addTask() {
-      const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
-      if(!t) return;
-      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:m, originalMin:m, compressedSec:null, addedSec:0 });
-      document.getElementById('newTaskTitle').value=''; saveTasks(); render();
-    }
-    function removeTask(i) {
-      if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
-      tasks.splice(i, 1); saveTasks(); render();
-    }
-    function moveTask(fromIdx, toIdx) {
-      if(fromIdx===toIdx || fromIdx<0 || toIdx<0 || fromIdx>=tasks.length || toIdx>=tasks.length) return;
-      const [moved] = tasks.splice(fromIdx, 1); tasks.splice(toIdx, 0, moved);
-      if(activeIdx >= 0 && activeIdx < tasks.length) {
-        if(activeIdx === fromIdx) activeIdx = toIdx;
-        else if(fromIdx < activeIdx && toIdx >= activeIdx) activeIdx--;
-        else if(fromIdx > activeIdx && toIdx <= activeIdx) activeIdx++;
-      }
-      saveTasks(); render(); vibrate(25);
-    }
-    function attachRowTouchHandlers(rowEl, idx) {
-      rowEl.addEventListener('touchstart', e => {
-        if(e.target.closest('button') || e.touches.length!==1) return;
-        const touch = e.touches[0];
-        dragState.startX = touch.clientX; dragState.startY = touch.clientY; dragState.fromIdx = idx; dragState.toIdx = idx; dragState.active = false;
-        clearTimeout(dragState.timerId);
-        dragState.timerId = setTimeout(() => {
-          dragState.active=true; vibrate(45); rowEl.classList.add('dragging');
-        }, 450);
-      }, {passive:true});
-      rowEl.addEventListener('touchmove', e => {
-        if(e.touches.length!==1) return;
-        const touch = e.touches[0];
-        if(!dragState.active) {
-          if(Math.abs(touch.clientX-dragState.startX)>12 || Math.abs(touch.clientY-dragState.startY)>12) { clearTimeout(dragState.timerId); dragState.timerId=null; }
-          return;
-        }
-        e.preventDefault();
-        const rows = Array.from(document.querySelectorAll('#tasksContainer .task-row'));
-        let closestIdx = dragState.fromIdx, minDist = Infinity;
-        rows.forEach((r, rIdx) => {
-          const rect = r.getBoundingClientRect(), dist = Math.abs(touch.clientY - (rect.top+rect.height/2));
-          if(dist < minDist) { minDist = dist; closestIdx = rIdx; }
-        });
-        dragState.toIdx = closestIdx;
-        rows.forEach((r,i) => { r.classList.remove('drop-target-top','drop-target-bottom'); if(i===closestIdx && i!==dragState.fromIdx) r.classList.add(closestIdx<dragState.fromIdx ? 'drop-target-top':'drop-target-bottom'); });
-      }, {passive:false});
-      const finishTouch = () => {
-        clearTimeout(dragState.timerId); dragState.timerId=null;
-        if(dragState.active) {
-          const from = dragState.fromIdx, to = dragState.toIdx; dragState.active=false;
-          document.querySelectorAll('#tasksContainer .task-row').forEach(r=>r.classList.remove('dragging','drop-target-top','drop-target-bottom'));
-          if(from!==to) moveTask(from,to);
-        }
-      };
-      rowEl.addEventListener('touchend', finishTouch); rowEl.addEventListener('touchcancel', finishTouch);
-    }
-
-    function render() {
-      try {
-        const now = new Date();
-        document.getElementById('clockNow').textContent = now.toTimeString().slice(0,8);
-        const remTotalSec = getRemainingTotalSec(activeIdx);
-        const forecast = new Date(now.getTime() + remTotalSec*1000);
-        document.getElementById('clockForecast').textContent = forecast.toTimeString().slice(0,8);
-
-        const tplBadge = document.getElementById('activeTemplateBadge');
-        if (tplBadge && customTemplates[activeTemplateIdx]) {
-          tplBadge.textContent = `📂 ${customTemplates[activeTemplateIdx].name}`;
-        }
-
-        const useDl = document.getElementById('useDeadline').checked;
-        const dlEl = document.getElementById('deadlineDiff');
-        if(useDl) {
-          const diffMin = Math.round((getDeadlineDate(now) - forecast)/60000);
-          if(diffMin>=0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
-          else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
-        } else { dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8'; }
-
-        const sb = document.getElementById('savedBank');
-        if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
-
-        const bBadge = document.getElementById('keepAliveBadge');
-        bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран и аудио защищены</span>' : '<span>🔓 Ожидание старта</span>';
-        bBadge.className = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300' : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400';
-
-        const tDisp = document.getElementById('timerDisplay'), pBar = document.getElementById('stepProgressBar'), mBtn = document.getElementById('mainBtn'), pBtn = document.getElementById('pauseBtn');
-        if (activeIdx === -1) {
-          document.getElementById('stepCounter').textContent = `Всего задач: ${tasks.length}`;
-          document.getElementById('currentTaskName').textContent = 'Нажмите Старт';
-          tDisp.textContent = fmtSec(remTotalSec); tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white';
-          pBar.style.width = '100%'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300';
-          document.getElementById('mainBtnTitle').textContent = '▶ СТАРТ'; document.getElementById('mainBtnSub').textContent = tasks[0]?`Первым делом: ${tasks[0].title}`:'Пустой список';
-          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
-        } else if (activeIdx < tasks.length) {
-          const rem = stepDurationSec - stepElapsedSec;
-          document.getElementById('stepCounter').textContent = `Шаг ${activeIdx+1} из ${tasks.length}`;
-          document.getElementById('currentTaskName').textContent = tasks[activeIdx].title + (paused ? ' ⏸' : '');
-          tDisp.textContent = fmtSec(rem);
-          document.getElementById('mainBtnTitle').textContent = '✓ ГОТОВО';
-          document.getElementById('mainBtnSub').textContent = tasks[activeIdx+1] ? `Дальше: ${tasks[activeIdx+1].title}` : 'Завершить цепочку 🏁';
-          pBtn.textContent = paused ? '▶' : '⏸';
-          pBar.style.width = `${Math.max(0, Math.min(100, (rem/Math.max(1, stepDurationSec))*100))}%`;
-
-          if (rem < 0) { document.body.className = 'pb-16 state-over'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-rose-400'; pBar.className = 'h-full bg-rose-500 transition-all duration-300'; }
-          else if (rem <= stepDurationSec * 0.2) { document.body.className = 'pb-16 state-warn'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-amber-300'; pBar.className = 'h-full bg-amber-400 transition-all duration-300'; }
-          else { document.body.className = 'pb-16 state-ok'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300'; }
-          mBtn.classList.toggle('paused', paused);
-        } else {
-          document.getElementById('stepCounter').textContent = 'Отличная работа!'; document.getElementById('currentTaskName').textContent = 'Все ритуалы завершены 🎉';
-          tDisp.textContent = '00:00'; pBar.style.width = '0%';
-          document.getElementById('mainBtnTitle').textContent = '🔄 ЗАНОВО'; document.getElementById('mainBtnSub').textContent = 'Посмотреть сводку';
-          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
-        }
-
-        document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0)/60)} мин`;
-        document.getElementById('tasksContainer').innerHTML = tasks.map((t,i) => {
-          const isCur = i===activeIdx, isDone = i<activeIdx;
-          const oMin = t.originalMin||t.min, cSec = getStepTargetSec(i);
-          const liveExtra = t.addedSec ? ` <span class="text-emerald-300">(+${Math.round(t.addedSec/60)} мин)</span>` : '';
-          const b = (t.compressedSec!=null && cSec<oMin*60)
-            ? `<span class="line-through mr-1">${oMin} мин</span><span class="text-amber-300">→ ${(cSec/60).toFixed(1)} мин ⚡</span>${liveExtra}`
-            : `(${oMin} мин)${liveExtra}`;
-          return `<div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded':''} ${isDone?'line-through text-slate-500':''}"><div class="flex items-center gap-2 truncate"><span class="text-slate-500 text-xs">⋮⋮</span><span class="truncate">${i+1}. ${t.title}</span><span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span></div><button type="button" onclick="removeTask(${i})" class="text-rose-400 px-2 font-bold row-btn">✕</button></div>`;
-        }).join('');
-        document.querySelectorAll('#tasksContainer .task-row').forEach((r,i) => attachRowTouchHandlers(r,i));
-      } catch (err) {
-        const vs = document.getElementById('voiceStatus');
-        if (vs) vs.textContent = `Ошибка отрисовки: ${err.message}`;
-      }
-    }
-
-    setInterval(() => {
-      if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
-        stepElapsedSec = Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000);
-
-        const rem = stepDurationSec - stepElapsedSec;
-        const halfPoint = Math.round(stepDurationSec * 0.5);
-        const warnPoint = Math.max(1, Math.round(stepDurationSec * 0.2));
-
-        if (stepDurationSec >= 120 && rem === halfPoint && !warned50) {
-          warned50 = true; saveSession(); playBeep(660,0.11,2); vibrate(80);
-          speakRu(`Половина времени. Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`);
-        }
-        if (rem === warnPoint && !warned20) {
-          warned20 = true; saveSession(); playBeep(880,0.15,2); vibrate([60,40,60]);
-          speakRu(`Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`, () => openAutoVoiceWindow5Sec());
-        }
-        if (rem === 0) {
-          playBeep(440,0.3,3); vibrate([150,80,150]);
-          speakRu(`Время на ${tasks[activeIdx].title} вышло!`, () => openAutoVoiceWindow5Sec());
-        }
-        if (rem < 0) {
-          const overMin = Math.floor(Math.abs(rem) / 60);
-          if (overMin >= 1 && overMin > lastOvertimeWarnMin) {
-            lastOvertimeWarnMin = overMin;
-            saveSession();
-            playBeep(360,0.25,2);
-            speakRu(`Просрочка ${overMin} минут`, () => openAutoVoiceWindow5Sec());
-          }
-        }
-      }
-      render();
-    }, 500);
-
-    try {
-      openTemplateConstructor(activeTemplateIdx);
-      renderTemplates();
-      renderJournal();
-      render();
-    } catch (err) {
-      const vs = document.getElementById('voiceStatus');
-      if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
-    }
-  </script>
-</body>
-</html>
