@@ -36,7 +36,6 @@
     .mic-active { animation:micPulse 1.3s infinite; background:#e11d48 !important; border-color:#fda4af !important; color:#fff !important; }
     .row-btn { min-width:38px; min-height:38px; }
     .task-row { touch-action:pan-y; user-select:none; transition:transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease; border:2px solid transparent; }
-    /* Яркое выделение ОТКУДА перетаскиваем */
     .task-row.dragging-source {
       position:relative; z-index:30;
       background:#1e3a8a !important;
@@ -45,7 +44,6 @@
       transform:scale(1.02);
       box-shadow:0 10px 25px rgba(56,189,248,.45);
     }
-    /* Яркое выделение КУДА упадёт пункт */
     .task-row.drop-target-active {
       background:#064e3b !important;
       border-color:#22c55e !important;
@@ -60,7 +58,7 @@
 </head>
 <body class="pb-16">
 
-  <div id="toastBox" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md pointer-events-none flex flex-col gap-2"></div>
+  <div id="toastBox" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md flex flex-col gap-2 pointer-events-none"></div>
 
   <div class="max-w-lg mx-auto space-y-3">
 
@@ -102,6 +100,10 @@
           <label class="flex items-center gap-2 font-semibold text-sky-300 cursor-pointer">
             <input type="checkbox" id="autoVoiceWindowToggle" checked onchange="saveSettings()" class="w-4 h-4 accent-sky-400 rounded cursor-pointer" />
             <span>🎙 Окно голоса 5 сек после 20% / финиша / просрочки</span>
+          </label>
+          <label class="flex items-center gap-2 font-semibold text-emerald-300 cursor-pointer">
+            <input type="checkbox" id="notifyToggle" onchange="toggleNotificationsSetting(this)" class="w-4 h-4 accent-emerald-400 rounded cursor-pointer" />
+            <span>🔔 Системные уведомления на экран</span>
           </label>
         </div>
         <div class="flex flex-col gap-1.5">
@@ -368,13 +370,13 @@
     let savedSec = session ? session.savedSec : 0;
     let warned50 = session ? session.warned50 : false;
     let warned20 = session ? session.warned20 : false;
+    let warnedZero = session ? (session.warnedZero || false) : false;
     let lastOvertimeWarnMin = session ? (session.lastOvertimeWarnMin || 0) : 0;
     let routineStats = session && Array.isArray(session.routineStats) ? session.routineStats : [];
     let pendingSuggestions = [];
+    let undoStack = [];
 
-    // Индекс редактируемого дела в «Текущем списке дел» (-1 = ничего не редактируется)
     let editingTaskIdx = -1;
-
     let constructorEditIdx = activeTemplateIdx;
     let constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
 
@@ -389,6 +391,45 @@
     let autoWindowTimer = null;
     let recognizedInCurrentWindow = false;
     let latestTranscript = '';
+
+    // Стек отмены действий (Undo)
+    function pushUndo(label) {
+      undoStack.push({
+        label,
+        tasks: JSON.parse(JSON.stringify(tasks)),
+        activeIdx,
+        stepDurationSec
+      });
+      if (undoStack.length > 10) undoStack.shift();
+    }
+
+    function showUndoToast(message) {
+      const box = document.getElementById('toastBox');
+      if (!box) return;
+      const el = document.createElement('div');
+      el.className = 'pointer-events-auto bg-slate-900/95 border border-sky-500/70 text-white px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold shadow-2xl flex items-center justify-between gap-3 transition-opacity duration-300';
+      const span = document.createElement('span');
+      span.textContent = message;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs flex-shrink-0 active:scale-95 transition';
+      btn.textContent = '↩ Отменить';
+      btn.onclick = () => {
+        const snap = undoStack.pop();
+        if (snap) {
+          tasks = JSON.parse(JSON.stringify(snap.tasks));
+          activeIdx = snap.activeIdx;
+          if (activeIdx >= 0 && activeIdx < tasks.length) stepDurationSec = getStepTargetSec(activeIdx);
+          saveTasks(); saveSession(); render();
+          showToast('↩ Действие отменено');
+        }
+        el.remove();
+      };
+      el.appendChild(span);
+      el.appendChild(btn);
+      box.appendChild(el);
+      setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 6000);
+    }
 
     function restoreDefaultTemplate() {
       customTemplates[0] = { id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) };
@@ -407,7 +448,7 @@
     function saveSession() {
       const s = {
         activeIdx, activeTemplateIdx, stepStartMs, totalPausedMs, pauseStartMs,
-        paused, savedSec, warned50, warned20, lastOvertimeWarnMin, routineStats, tasks
+        paused, savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin, routineStats, tasks
       };
       localStorage.setItem('m_active_session', JSON.stringify(s));
       localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
@@ -417,7 +458,10 @@
       session = null;
     }
     function saveTasks() {
-      const s = safeJsonParse(localStorage.getItem('m_active_session'), {});
+      const s = safeJsonParse(localStorage.getItem('m_active_session'), null) || {
+        activeIdx, stepStartMs, totalPausedMs, pauseStartMs, paused,
+        savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin, routineStats
+      };
       s.tasks = tasks;
       s.activeTemplateIdx = activeTemplateIdx;
       localStorage.setItem('m_active_session', JSON.stringify(s));
@@ -427,6 +471,7 @@
       localStorage.setItem('m_use_deadline', document.getElementById('useDeadline').checked);
       localStorage.setItem('m_silent_mode', document.getElementById('silentModeToggle').checked);
       localStorage.setItem('m_auto_voice_win', document.getElementById('autoVoiceWindowToggle').checked);
+      localStorage.setItem('m_notify', document.getElementById('notifyToggle').checked);
       localStorage.setItem('m_deadline_time', document.getElementById('deadlineTime').value);
     }
     (function loadSettings() {
@@ -438,9 +483,41 @@
       if (s !== null) document.getElementById('silentModeToggle').checked = safeJsonParse(s, false);
       const v = localStorage.getItem('m_auto_voice_win');
       if (v !== null) document.getElementById('autoVoiceWindowToggle').checked = safeJsonParse(v, true);
+      const n = localStorage.getItem('m_notify');
+      if (n !== null) document.getElementById('notifyToggle').checked = safeJsonParse(n, false);
       const t = localStorage.getItem('m_deadline_time');
       if (t) document.getElementById('deadlineTime').value = t;
     })();
+
+    function toggleNotificationsSetting(checkbox) {
+      if (checkbox.checked && 'Notification' in window && Notification.permission !== 'granted') {
+        Notification.requestPermission().then(perm => {
+          if (perm !== 'granted') {
+            checkbox.checked = false;
+            showToast('⚠️ Разрешите уведомления в настройках браузера');
+          }
+          saveSettings();
+        }).catch(() => saveSettings());
+      } else {
+        saveSettings();
+      }
+    }
+
+    function notify(title, body) {
+      const toggle = document.getElementById('notifyToggle');
+      if (!toggle || !toggle.checked) return;
+      try {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then(reg => {
+            if (reg && reg.showNotification) reg.showNotification(title, { body, vibrate: [100, 50, 100] });
+            else new Notification(title, { body });
+          }).catch(() => { try { new Notification(title, { body }); } catch(e){} });
+        } else {
+          new Notification(title, { body });
+        }
+      } catch(e) {}
+    }
 
     function showToast(message) {
       const box = document.getElementById('toastBox');
@@ -539,9 +616,12 @@
       }
     });
 
+    // Фикс деградации автоужатия: базовое время всегда от originalMin
     function getStepTargetSec(idx) {
       if (!tasks[idx]) return 0;
-      let base = tasks[idx].compressedSec != null ? tasks[idx].compressedSec : Math.round(tasks[idx].min*60);
+      let base = tasks[idx].compressedSec != null
+        ? tasks[idx].compressedSec
+        : Math.round((tasks[idx].originalMin ?? tasks[idx].min) * 60);
       return Math.max(30, base + (tasks[idx].addedSec || 0));
     }
 
@@ -570,7 +650,7 @@
       let currentUncompressedRemSec = 0;
       for (let i=startIdx;i<tasks.length;i++) {
         if (i===activeIdx && targetStartIdx===null) currentUncompressedRemSec += Math.max(30, stepDurationSec - stepElapsedSec);
-        else currentUncompressedRemSec += getStepTargetSec(i);
+        else currentUncompressedRemSec += Math.round((tasks[i].originalMin ?? tasks[i].min) * 60) + (tasks[i].addedSec || 0);
       }
       const lateSec = currentUncompressedRemSec - availSec;
       const lateMin = Math.max(1, Math.round(lateSec/60));
@@ -578,15 +658,22 @@
         if (isManual) showToast('✅ Вы уже укладываетесь в дедлайн!');
         return { compressed:false, lateMin:0 };
       }
+      if (isManual) pushUndo('Сжатие');
       const ratio = Math.max(remCount*30, availSec) / currentUncompressedRemSec;
       for (let i=startIdx;i<tasks.length;i++) {
         if (tasks[i].originalMin == null) tasks[i].originalMin = tasks[i].min;
-        const baseSec = (i===activeIdx && targetStartIdx===null) ? Math.max(30, stepDurationSec - stepElapsedSec) : getStepTargetSec(i);
+        const baseSec = (i===activeIdx && targetStartIdx===null)
+          ? Math.max(30, stepDurationSec - stepElapsedSec)
+          : Math.round((tasks[i].originalMin ?? tasks[i].min) * 60);
         tasks[i].compressedSec = Math.max(30, Math.round(baseSec*ratio));
         if (i===activeIdx && targetStartIdx===null) stepDurationSec = getStepTargetSec(i);
       }
       saveSession(); render();
-      if (isManual) { playBeep(680,0.1,2); speakRu(`Сжато под дедлайн. Отставание было ${lateMin} минут.`); showToast(`⚡ Сжато под дедлайн!`); }
+      if (isManual) {
+        playBeep(680,0.1,2);
+        speakRu(`Сжато под дедлайн. Отставание было ${lateMin} минут.`);
+        showUndoToast(`⚡ Сжато под дедлайн (отставание ${lateMin} мин)`);
+      }
       return { compressed:true, lateMin };
     }
 
@@ -957,9 +1044,8 @@
         const targetIdx = findTaskIndexByName(cleanedTarget);
         if (targetIdx >= 0 && targetIdx < tasks.length) {
           const removedTitle = tasks[targetIdx].title;
-          removeTask(targetIdx);
+          removeTask(targetIdx, true);
           speakRu(`Удалил ${removedTitle}`);
-          showToast(`🗑 Удалено: ${removedTitle}`);
           return true;
         }
         return false;
@@ -987,6 +1073,7 @@
       return false;
     }
 
+    // Пункт 7: точный сплит по запятым и « и » только перед глаголами команд
     function parseVoiceChain(fullText) {
       const normalized = normalizeSpokenNumbers(fullText).trim();
       if (!normalized) return false;
@@ -996,7 +1083,7 @@
       }
 
       const parts = normalized
-        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+)(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)\b)/i)
+        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)\b))/i)
         .map(s => s.trim())
         .filter(Boolean);
 
@@ -1271,7 +1358,7 @@
     }
     function startStep(idx) {
       activeIdx = idx; stepStartMs = Date.now(); totalPausedMs = 0; paused = false; stepElapsedSec = 0;
-      warned50 = false; warned20 = false; lastOvertimeWarnMin = 0;
+      warned50 = false; warned20 = false; warnedZero = false; lastOvertimeWarnMin = 0;
       let cInfo = (document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
         ? compressToDeadline(false, idx) : { compressed:false, lateMin:0 };
       stepDurationSec = getStepTargetSec(idx);
@@ -1353,6 +1440,7 @@
       renderSummaryCard(routineStats);
       renderJournal();
       render();
+      notify('Утренний Темп-Будильник', 'Отличная работа! Все ритуалы завершены 🎉');
       speakRu('Отличная работа! Все ритуалы завершены.', () => openAutoVoiceWindow5Sec());
     }
     function resetRoutine() {
@@ -1689,32 +1777,54 @@
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
     }
+
+    // Пункт 6: Валидация импорта + авто-бэкап
     function importData(e) {
       const file = e.target.files[0]; if(!file) return;
       const reader = new FileReader();
       reader.onload = ev => {
         try {
           const data = JSON.parse(ev.target.result);
-          if(Array.isArray(data.templates)) localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
-          if(Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
-          if(data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
-          alert('Импорт успешен! Страница будет перезагружена.'); location.reload();
+          const okTemplates = Array.isArray(data.templates) && data.templates.every(t =>
+            t && typeof t.name === 'string' && Array.isArray(t.tasks) &&
+            t.tasks.every(x => x && typeof x.title === 'string' && typeof x.min === 'number'));
+          const okJournal = data.journal === undefined || (Array.isArray(data.journal) &&
+            data.journal.every(j => j && typeof j.date === 'number'));
+          if (!okTemplates || !okJournal) {
+            alert('Файл не похож на резервную копию — импорт отменён.');
+            return;
+          }
+          const backup = {
+            templates: safeJsonParse(localStorage.getItem('m_custom_templates'), []),
+            journal: safeJsonParse(localStorage.getItem('m_journal'), [])
+          };
+          localStorage.setItem('m_backup_before_import', JSON.stringify(backup));
+          localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
+          if (Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
+          if (data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
+          alert('Импорт успешен! Страница будет перезагружена.');
+          location.reload();
         } catch(err) { alert('Ошибка чтения файла!'); }
       }; reader.readAsText(file);
     }
 
-    // ============ РЕДАКТИРОВАНИЕ КАРАНДАШОМ И ПЕРЕТАСКИВАНИЕ В ТЕКУЩЕМ СПИСКЕ ============
+    // ============ РЕДАКТИРОВАНИЕ КАРАНДАШОМ, UNDO И ПЕРЕТАСКИВАНИЕ ============
     function addTask() {
       const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
       if(!t) return;
       tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:m, originalMin:m, compressedSec:null, addedSec:0 });
       document.getElementById('newTaskTitle').value=''; saveTasks(); render();
     }
-    function removeTask(i) {
+    function removeTask(i, fromVoice = false) {
+      if (!tasks[i]) return;
+      if (!fromVoice && i === activeIdx && !confirm('Удалить текущий активный шаг? Прогресс шага будет сброшен.')) return;
+      const removedTitle = tasks[i].title;
+      pushUndo('Удаление пункта');
       if (editingTaskIdx === i) editingTaskIdx = -1;
       else if (editingTaskIdx > i) editingTaskIdx--;
       if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
       tasks.splice(i, 1); saveTasks(); render();
+      showUndoToast(`🗑 Удалено: «${removedTitle}»`);
     }
     function startEditTask(i) {
       editingTaskIdx = i;
@@ -1826,9 +1936,8 @@
       rowEl.addEventListener('touchcancel', finishTouch);
     }
 
-    // ============ ОТРИСОВКА СПИСКА ДЕЛ (НЕ СБРАСЫВАЕТСЯ КАЖДЫЕ 0.5 СЕК) ============
     function renderTasksList() {
-      if (dragState.active) return; // Не трогаем DOM во время перетаскивания!
+      if (dragState.active) return;
       const container = document.getElementById('tasksContainer');
       if (!container) return;
 
@@ -1876,7 +1985,6 @@
       document.querySelectorAll('#tasksContainer .task-row').forEach((r, i) => attachRowTouchHandlers(r, i));
     }
 
-    // Обновление только часов, таймера и верхних индикаторов (вызывается каждые 500 мс)
     function updateClockAndTimerUI() {
       try {
         const now = new Date();
@@ -1939,12 +2047,12 @@
       }
     }
 
-    // Полная перерисовка (вызывается при изменении задач, шага или настроек)
     function render() {
       updateClockAndTimerUI();
       renderTasksList();
     }
 
+    // Пункт 2: Надёжное пересечение порогов 50% / 20% / 00:00 без пропуска при дрейфе
     setInterval(() => {
       if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
         stepElapsedSec = Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000);
@@ -1953,16 +2061,19 @@
         const halfPoint = Math.round(stepDurationSec * 0.5);
         const warnPoint = Math.max(1, Math.round(stepDurationSec * 0.2));
 
-        if (stepDurationSec >= 120 && rem === halfPoint && !warned50) {
+        if (stepDurationSec >= 120 && rem <= halfPoint && rem > warnPoint && !warned50) {
           warned50 = true; saveSession(); playBeep(660,0.11,2); vibrate(80);
           speakRu(`Половина времени. Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`);
         }
-        if (rem === warnPoint && !warned20) {
+        if (rem <= warnPoint && rem > 0 && !warned20) {
           warned20 = true; saveSession(); playBeep(880,0.15,2); vibrate([60,40,60]);
+          notify('Темп-будильник', `Осталось ${rem>=60 ? Math.ceil(rem/60)+' мин' : rem+' сек'} — ${tasks[activeIdx].title}`);
           speakRu(`Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`, () => openAutoVoiceWindow5Sec());
         }
-        if (rem === 0) {
+        if (rem <= 0 && !warnedZero) {
+          warnedZero = true; saveSession();
           playBeep(440,0.3,3); vibrate([150,80,150]);
+          notify('Темп-будильник', `Время на «${tasks[activeIdx].title}» вышло!`);
           speakRu(`Время на ${tasks[activeIdx].title} вышло!`, () => openAutoVoiceWindow5Sec());
         }
         if (rem < 0) {
@@ -1971,6 +2082,7 @@
             lastOvertimeWarnMin = overMin;
             saveSession();
             playBeep(360,0.25,2);
+            notify('Темп-будильник', `Просрочка ${overMin} мин — ${tasks[activeIdx].title}`);
             speakRu(`Просрочка ${overMin} минут`, () => openAutoVoiceWindow5Sec());
           }
         }
