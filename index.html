@@ -284,6 +284,23 @@
   <audio id="silentHtmlAudio" loop playsinline class="hidden"></audio>
 
   <script>
+    // 1. Канарейка: проверка целостности скобок после копирования
+    try {
+      const __probe = [1, 2].map(x => x * 10);
+      if (__probe[0] !== 10) throw new Error('probe');
+    } catch (e) {
+      document.body.innerHTML = '<div style="padding:2em;font-family:sans-serif;color:#fff;background:#7f1d1d;min-height:100vh">'
+        + '⚠️ Код повреждён при копировании: скобки [ ] заменены на ( ). '
+        + 'Возьмите исходный файл с GitHub, а не текст из чата.</div>';
+      throw e;
+    }
+
+    // 8. Экранирование строк для вёрстки
+    function esc(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
     }
@@ -433,7 +450,13 @@
         }
       } catch(e){}
     }
+
+    // 4. Микрофон vs озвучка
     function speakRu(text, onDone = null) {
+      if (voiceMode === 'main' || voiceMode === 'constructor' || voiceMode === 'auto') {
+        if (typeof onDone === 'function') setTimeout(onDone, 150);
+        return;
+      }
       if (document.getElementById('silentModeToggle').checked || !('speechSynthesis' in window)) {
         if (typeof onDone === 'function') setTimeout(onDone, 150);
         return;
@@ -472,8 +495,15 @@
       v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,len*2,true);
       return silentWavUrl = URL.createObjectURL(new Blob([buf], {type:'audio/wav'}));
     }
+
+    // 5. WakeLock: слушатель release
     async function enableKeepAlive() {
-      try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); } } catch(e){}
+      try {
+        if ('wakeLock' in navigator && !wakeLock) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch(e){}
       try {
         const a = document.getElementById('silentHtmlAudio');
         if (!a.src) a.src = createSilentWavBlobUrl();
@@ -499,9 +529,12 @@
       let base = tasks[idx].compressedSec != null ? tasks[idx].compressedSec : Math.round(tasks[idx].min*60);
       return Math.max(30, base + (tasks[idx].addedSec || 0));
     }
+
+    // 6. Полночный дедлайн
     function getDeadlineDate(now = new Date()) {
-      const [dh,dm] = (document.getElementById('deadlineTime').value || '07:45').split(':').map(Number);
-      const dl = new Date(now); dl.setHours(dh,dm,0,0);
+      const [dh, dm] = (document.getElementById('deadlineTime').value || '07:45').split(':').map(Number);
+      const dl = new Date(now); dl.setHours(dh, dm, 0, 0);
+      if (dl.getTime() - now.getTime() < -6 * 3600 * 1000) dl.setDate(dl.getDate() + 1);
       return dl;
     }
     function getRemainingTotalSec(fromIdx = activeIdx) {
@@ -593,6 +626,7 @@
       return !isNaN(num) && num >= 1 ? num : null;
     }
 
+    // 9. Менее жадный поиск задачи с приоритетом точного совпадения
     function findTaskIndexByName(query) {
       if (!query || !tasks.length) return -1;
       const q = query.toLowerCase().replace(/ё/g, 'е').trim();
@@ -602,6 +636,10 @@
       const numPos = parsePositionToken(q);
       if (numPos !== null && numPos >= 1 && numPos <= tasks.length && /^(пункт|шаг|дело|номер)?\s*\d+/.test(q)) {
         return numPos - 1;
+      }
+      for (let idx = 0; idx < tasks.length; idx++) {
+        const title = tasks[idx].title.toLowerCase().replace(/ё/g, 'е');
+        if (title === q) return idx;
       }
       let bestIdx = -1;
       let bestScore = 0;
@@ -613,7 +651,7 @@
         }
         const words = title.split(/\s+/);
         words.forEach(w => {
-          const stem = w.slice(0, Math.max(3, w.length - 2));
+          const stem = w.slice(0, Math.max(4, w.length - 2));
           if (stem && q.includes(stem) && stem.length > bestScore) {
             bestScore = stem.length;
             bestIdx = idx;
@@ -697,7 +735,6 @@
       const normalized = rawText.toLowerCase().replace(/ё/g, 'е').replace(/[.,!?]+$/g, '').trim();
       if (!normalized) return 0;
 
-      // Разбиваем по запятым, союзам ИЛИ сразу после «<число> минут/минуты/минуту/мин/м» перед следующим словом
       const segmented = normalized
         .replace(/(\d+(?:[.,]\d+)?|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двенадцать|пятнадцать|двадцать|тридцать|полтора|полчаса|пару)\s*(?:минут[ауы]?|мин|м)\s+(?:и\s+)?(?=(?:добавь|впиши|закинь|о\s+да\s+)?[а-яa-z])/gi, '$1 минут | ')
         .split(/(?:\s*\|\s*|,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+а также\s+)/i)
@@ -802,6 +839,20 @@
       if (/сжать|подожми|уложи в дедлайн/.test(text)) {
         compressToDeadline(true);
         return true;
+      }
+
+      // 3. Возврат ветки «N-м пунктом» до deltaMatch и extractTaskItemsFromText
+      const insertMatch = text.match(
+        /(?:добавь|впиши|закинь)\s+(.+?)\s+(\d+(?:[.,]\d+)?|полтора|полчаса|пару)\s*(?:минут[ауы]?|мин|м)?\s+(первым|вторым|третьим|четвертым|четвёртым|пятым|шестым|седьмым|восьмым|девятым|десятым|\d+-м)\s+пунктом/i
+      );
+      if (insertMatch) {
+        const title = insertMatch[1].trim();
+        const min = parseNumberToken(insertMatch[2]) ?? 5;
+        const pos = parsePositionToken(insertMatch[3].replace('-м', ''));
+        if (title && pos !== null) {
+          insertTaskAt(pos, title, min);
+          return true;
+        }
       }
 
       const swapMatch = text.match(/поменяй\s+(?:местами\s+)?(.+?)\s+и\s+(.+)$/i);
@@ -983,6 +1034,8 @@
         return;
       }
 
+      // 4. Глушим озвучку перед стартом микрофона
+      try { window.speechSynthesis.cancel(); } catch(e){}
       try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
 
       const rec = new SpeechRecognition();
@@ -997,14 +1050,12 @@
           : '🎙 Слушаю команду (авто-стоп через 3 сек тишины)...';
       };
 
+      // 2. Берём только последний элемент без склейки в «снежный ком»
       rec.onresult = (event) => {
-        let best = '';
-        for (let i = 0; i < event.results.length; i++) {
-          const txt = (event.results[i][0]?.transcript || '').trim();
-          if (txt) best += (best ? ' ' : '') + txt;
-        }
-        if (best) {
-          latestTranscript = best;
+        const last = event.results[event.results.length - 1];
+        const txt = (last && last[0] ? last[0].transcript : '').trim();
+        if (txt) {
+          latestTranscript = txt;
           if (statusEl) statusEl.textContent = `🎙 Записано: «${latestTranscript}»`;
           resetSilenceTimer(3000);
         }
@@ -1044,6 +1095,7 @@
       if (!SpeechRecognition) return;
 
       stopActiveRecognition(false);
+      try { window.speechSynthesis.cancel(); } catch(e){}
       try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
 
       voiceMode = 'auto';
@@ -1067,24 +1119,21 @@
       }, 5000);
 
       rec.onresult = (event) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            const phrase = event.results[i][0].transcript.trim();
-            if (!phrase) continue;
-            if (statusEl) statusEl.textContent = `🎙 Услышано: «${phrase}»`;
-            const matched = parseVoiceChain(phrase);
-            if (matched) {
-              recognizedInCurrentWindow = true;
-              clearTimeout(autoWindowTimer);
-              autoWindowTimer = setTimeout(() => {
-                stopActiveRecognition(false);
-                if (statusEl) statusEl.textContent = '';
-              }, 3000);
-            } else {
-              stopActiveRecognition(false);
-              if (statusEl) statusEl.textContent = '';
-            }
-          }
+        const last = event.results[event.results.length - 1];
+        const phrase = (last && last[0] ? last[0].transcript : '').trim();
+        if (!phrase) return;
+        if (statusEl) statusEl.textContent = `🎙 Услышано: «${phrase}»`;
+        const matched = parseVoiceChain(phrase);
+        if (matched) {
+          recognizedInCurrentWindow = true;
+          clearTimeout(autoWindowTimer);
+          autoWindowTimer = setTimeout(() => {
+            stopActiveRecognition(false);
+            if (statusEl) statusEl.textContent = '';
+          }, 3000);
+        } else {
+          stopActiveRecognition(false);
+          if (statusEl) statusEl.textContent = '';
         }
       };
       rec.onerror = () => {
@@ -1176,6 +1225,8 @@
       if (activeIdx === -1 || activeIdx >= tasks.length) { resetRoutine(); return; }
       if (confirm('Сбросить прогресс?')) resetRoutine();
     }
+
+    // 7. Порядок в finishRoutine + ротация журнала
     function finishRoutine() {
       activeIdx = tasks.length; document.body.className = 'pb-16';
       stopActiveRecognition(false);
@@ -1187,6 +1238,8 @@
         totalPlan += (s.plannedSec + (s.liveAdjSec || 0));
         if (!s.skipped) totalAct += s.actualSec;
       });
+
+      clearSession();
       journal.push({
         date: Date.now(),
         templateId: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].id : null,
@@ -1195,9 +1248,13 @@
         totalActual: totalAct,
         stats: routineStats
       });
-      localStorage.setItem('m_journal', JSON.stringify(journal));
+      if (journal.length > 100) journal = journal.slice(-100);
+      try {
+        localStorage.setItem('m_journal', JSON.stringify(journal));
+      } catch (e) {
+        showToast('⚠️ Журнал не сохранился: память переполнена');
+      }
 
-      clearSession();
       renderSummaryCard(routineStats);
       renderJournal();
       render();
@@ -1249,7 +1306,7 @@
         });
 
         return `<div class="flex justify-between items-center bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
-          <span class="font-bold text-slate-200 truncate">${i+1}. ${s.title}${liveNote}</span>
+          <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}${liveNote}</span>
           <div class="flex gap-2 text-xs items-center flex-shrink-0">
             <span>План: ${fmtSec(effectivePlan)}</span>
             <span class="text-white">Факт: ${s.skipped?'-':fmtSec(s.actualSec)}</span>
@@ -1262,7 +1319,7 @@
         <label class="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 px-2.5 py-1.5 rounded-lg cursor-pointer">
           <span class="flex items-center gap-2 truncate">
             <input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleSuggestion(${idx}, this.checked)" class="accent-emerald-400" />
-            <span class="truncate text-slate-200">${item.title}</span>
+            <span class="truncate text-slate-200">${esc(item.title)}</span>
           </span>
           <span class="flex items-center gap-1 flex-shrink-0">
             <button type="button" onclick="event.preventDefault();stepSuggestionMin(${idx}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">−</button>
@@ -1364,10 +1421,10 @@
       list.innerHTML = constructorDraftTasks.map((t, i) => `
         <div class="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
           <span class="text-slate-500 font-bold w-4">${i+1}.</span>
-          <input type="text" value="${String(t.title || '').replace(/"/g, '&quot;')}"
+          <input type="text" value="${esc(t.title)}"
             onchange="updateConstructorTask(${i}, 'title', this.value)"
             class="flex-1 bg-transparent text-white focus:outline-none" />
-          <input type="number" value="${t.min}" min="0.5" step="0.5"
+          <input type="number" value="${esc(t.min)}" min="0.5" step="0.5"
             onchange="updateConstructorTask(${i}, 'min', this.value)"
             class="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-sky-300 font-bold tabular-nums" />
           <span class="text-slate-500 text-[10px]">мин</span>
@@ -1458,3 +1515,273 @@
       let cutoff = 0;
       if (days !== 'all') cutoff = Date.now() - (parseInt(days, 10) * 24 * 60 * 60 * 1000);
       const filtered = journal.filter(j => j.date >= cutoff);
+
+      if (filtered.length === 0) {
+        chart.innerHTML = '<div class="text-xs text-slate-500 w-full text-center pb-4">Нет данных за этот период</div>';
+        tips.innerHTML = 'Соберите статистику завершённых дней, чтобы получить советы.';
+        return;
+      }
+
+      const toShow = filtered.slice(-15);
+      chart.innerHTML = toShow.map(j => {
+        const pct = Math.min(100, Math.max(10, (j.totalActual / Math.max(1, j.totalPlan)) * 50));
+        const color = j.totalActual > j.totalPlan ? 'bg-rose-500' : 'bg-emerald-500';
+        return `<div class="w-full mx-0.5 rounded-t-sm chart-bar ${color}" style="height:${pct}%" title="${esc(new Date(j.date).toLocaleDateString())}"></div>`;
+      }).join('');
+
+      const taskFails = {};
+      filtered.forEach(j => {
+        (j.stats || []).forEach(s => {
+          if (s.skipped) return;
+          const plan = s.plannedSec + (s.liveAdjSec || 0);
+          const over = s.actualSec - plan;
+          if (over > 0) taskFails[s.title] = (taskFails[s.title] || []).concat(over);
+        });
+      });
+      let worstTask = null, maxAvg = 0;
+      for (const t in taskFails) {
+        const avg = taskFails[t].reduce((a, b) => a + b, 0) / taskFails[t].length;
+        if (avg > maxAvg) { maxAvg = avg; worstTask = t; }
+      }
+      if (worstTask && maxAvg > 60) {
+        tips.innerHTML = `💡 Чаще всего вы теряете время на шаге <b>«${esc(worstTask)}»</b> (в среднем перерасход +${Math.round(maxAvg/60)} мин). Примените совет в сводке или увеличьте план в конструкторе.`;
+      } else {
+        tips.innerHTML = '🔥 Вы отлично справляетесь! Критических просадок по времени не обнаружено.';
+      }
+    }
+
+    function renderTemplates() {
+      const cont = document.getElementById('templatesList');
+      if (!cont) return;
+      cont.innerHTML = customTemplates.map((t, i) => {
+        const isSelected = i === activeTemplateIdx;
+        return `
+          <div class="flex items-center bg-slate-800 border ${isSelected ? 'border-sky-400' : 'border-slate-600'} rounded-xl overflow-hidden text-xs">
+            <button type="button" onclick="selectTemplate(${i})" class="px-3 py-2 text-white hover:bg-slate-700 font-bold">${isSelected ? '✓ ' : ''}${esc(t.name)}</button>
+            <button type="button" onclick="openTemplateConstructor(${i})" title="Редактировать" class="px-2 py-2 text-sky-300 hover:bg-slate-700 border-l border-slate-600">✎</button>
+            <button type="button" onclick="deleteTemplate(${i})" title="Удалить" class="px-2 py-2 text-rose-400 hover:bg-rose-950 border-l border-slate-600">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+    function selectTemplate(idx) {
+      if (activeIdx > -1 && activeIdx < tasks.length) {
+        if (!confirm('Прервать текущую цепочку и загрузить выбранный шаблон?')) return;
+      }
+      activeTemplateIdx = idx;
+      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      tasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
+      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      openTemplateConstructor(idx);
+      resetRoutine();
+      renderTemplates();
+      showToast(`📂 Выбран: ${customTemplates[idx].name}`);
+    }
+    function deleteTemplate(idx) {
+      if (customTemplates.length <= 1) { showToast('⚠️ Должен остаться хотя бы один шаблон'); return; }
+      if (confirm('Удалить шаблон?')) {
+        customTemplates.splice(idx, 1);
+        if (activeTemplateIdx >= customTemplates.length) activeTemplateIdx = customTemplates.length - 1;
+        localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+        openTemplateConstructor(activeTemplateIdx);
+        renderTemplates();
+      }
+    }
+
+    function exportData() {
+      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null) };
+      const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
+    }
+    function importData(e) {
+      const file = e.target.files[0]; if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if(Array.isArray(data.templates)) localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
+          if(Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
+          if(data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
+          alert('Импорт успешен! Страница будет перезагружена.'); location.reload();
+        } catch(err) { alert('Ошибка чтения файла!'); }
+      }; reader.readAsText(file);
+    }
+
+    function addTask() {
+      const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
+      if(!t) return;
+      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:m, originalMin:m, compressedSec:null, addedSec:0 });
+      document.getElementById('newTaskTitle').value=''; saveTasks(); render();
+    }
+    function removeTask(i) {
+      if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
+      tasks.splice(i, 1); saveTasks(); render();
+    }
+    function moveTask(fromIdx, toIdx) {
+      if(fromIdx===toIdx || fromIdx<0 || toIdx<0 || fromIdx>=tasks.length || toIdx>=tasks.length) return;
+      const [moved] = tasks.splice(fromIdx, 1); tasks.splice(toIdx, 0, moved);
+      if(activeIdx >= 0 && activeIdx < tasks.length) {
+        if(activeIdx === fromIdx) activeIdx = toIdx;
+        else if(fromIdx < activeIdx && toIdx >= activeIdx) activeIdx--;
+        else if(fromIdx > activeIdx && toIdx <= activeIdx) activeIdx++;
+      }
+      saveTasks(); render(); vibrate(25);
+    }
+    function attachRowTouchHandlers(rowEl, idx) {
+      rowEl.addEventListener('touchstart', e => {
+        if(e.target.closest('button') || e.touches.length!==1) return;
+        const touch = e.touches[0];
+        dragState.startX = touch.clientX; dragState.startY = touch.clientY; dragState.fromIdx = idx; dragState.toIdx = idx; dragState.active = false;
+        clearTimeout(dragState.timerId);
+        dragState.timerId = setTimeout(() => {
+          dragState.active=true; vibrate(45); rowEl.classList.add('dragging');
+        }, 450);
+      }, {passive:true});
+      rowEl.addEventListener('touchmove', e => {
+        if(e.touches.length!==1) return;
+        const touch = e.touches[0];
+        if(!dragState.active) {
+          if(Math.abs(touch.clientX-dragState.startX)>12 || Math.abs(touch.clientY-dragState.startY)>12) { clearTimeout(dragState.timerId); dragState.timerId=null; }
+          return;
+        }
+        e.preventDefault();
+        const rows = Array.from(document.querySelectorAll('#tasksContainer .task-row'));
+        let closestIdx = dragState.fromIdx, minDist = Infinity;
+        rows.forEach((r, rIdx) => {
+          const rect = r.getBoundingClientRect(), dist = Math.abs(touch.clientY - (rect.top+rect.height/2));
+          if(dist < minDist) { minDist = dist; closestIdx = rIdx; }
+        });
+        dragState.toIdx = closestIdx;
+        rows.forEach((r,i) => { r.classList.remove('drop-target-top','drop-target-bottom'); if(i===closestIdx && i!==dragState.fromIdx) r.classList.add(closestIdx<dragState.fromIdx ? 'drop-target-top':'drop-target-bottom'); });
+      }, {passive:false});
+      const finishTouch = () => {
+        clearTimeout(dragState.timerId); dragState.timerId=null;
+        if(dragState.active) {
+          const from = dragState.fromIdx, to = dragState.toIdx; dragState.active=false;
+          document.querySelectorAll('#tasksContainer .task-row').forEach(r=>r.classList.remove('dragging','drop-target-top','drop-target-bottom'));
+          if(from!==to) moveTask(from,to);
+        }
+      };
+      rowEl.addEventListener('touchend', finishTouch); rowEl.addEventListener('touchcancel', finishTouch);
+    }
+
+    function render() {
+      try {
+        const now = new Date();
+        document.getElementById('clockNow').textContent = now.toTimeString().slice(0,8);
+        const remTotalSec = getRemainingTotalSec(activeIdx);
+        const forecast = new Date(now.getTime() + remTotalSec*1000);
+        document.getElementById('clockForecast').textContent = forecast.toTimeString().slice(0,8);
+
+        const tplBadge = document.getElementById('activeTemplateBadge');
+        if (tplBadge && customTemplates[activeTemplateIdx]) {
+          tplBadge.textContent = `📂 ${customTemplates[activeTemplateIdx].name}`;
+        }
+
+        const useDl = document.getElementById('useDeadline').checked;
+        const dlEl = document.getElementById('deadlineDiff');
+        if(useDl) {
+          const diffMin = Math.round((getDeadlineDate(now) - forecast)/60000);
+          if(diffMin>=0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
+          else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
+        } else { dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8'; }
+
+        const sb = document.getElementById('savedBank');
+        if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
+
+        const bBadge = document.getElementById('keepAliveBadge');
+        bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран и аудио защищены</span>' : '<span>🔓 Ожидание старта</span>';
+        bBadge.className = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300' : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400';
+
+        const tDisp = document.getElementById('timerDisplay'), pBar = document.getElementById('stepProgressBar'), mBtn = document.getElementById('mainBtn'), pBtn = document.getElementById('pauseBtn');
+        if (activeIdx === -1) {
+          document.getElementById('stepCounter').textContent = `Всего задач: ${tasks.length}`;
+          document.getElementById('currentTaskName').textContent = 'Нажмите Старт';
+          tDisp.textContent = fmtSec(remTotalSec); tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white';
+          pBar.style.width = '100%'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300';
+          document.getElementById('mainBtnTitle').textContent = '▶ СТАРТ'; document.getElementById('mainBtnSub').textContent = tasks[0]?`Первым делом: ${tasks[0].title}`:'Пустой список';
+          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
+        } else if (activeIdx < tasks.length) {
+          const rem = stepDurationSec - stepElapsedSec;
+          document.getElementById('stepCounter').textContent = `Шаг ${activeIdx+1} из ${tasks.length}`;
+          document.getElementById('currentTaskName').textContent = tasks[activeIdx].title + (paused ? ' ⏸' : '');
+          tDisp.textContent = fmtSec(rem);
+          document.getElementById('mainBtnTitle').textContent = '✓ ГОТОВО';
+          document.getElementById('mainBtnSub').textContent = tasks[activeIdx+1] ? `Дальше: ${tasks[activeIdx+1].title}` : 'Завершить цепочку 🏁';
+          pBtn.textContent = paused ? '▶' : '⏸';
+          pBar.style.width = `${Math.max(0, Math.min(100, (rem/Math.max(1, stepDurationSec))*100))}%`;
+
+          if (rem < 0) { document.body.className = 'pb-16 state-over'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-rose-400'; pBar.className = 'h-full bg-rose-500 transition-all duration-300'; }
+          else if (rem <= stepDurationSec * 0.2) { document.body.className = 'pb-16 state-warn'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-amber-300'; pBar.className = 'h-full bg-amber-400 transition-all duration-300'; }
+          else { document.body.className = 'pb-16 state-ok'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300'; }
+          mBtn.classList.toggle('paused', paused);
+        } else {
+          document.getElementById('stepCounter').textContent = 'Отличная работа!'; document.getElementById('currentTaskName').textContent = 'Все ритуалы завершены 🎉';
+          tDisp.textContent = '00:00'; pBar.style.width = '0%';
+          document.getElementById('mainBtnTitle').textContent = '🔄 ЗАНОВО'; document.getElementById('mainBtnSub').textContent = 'Посмотреть сводку';
+          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
+        }
+
+        document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0)/60)} мин`;
+        document.getElementById('tasksContainer').innerHTML = tasks.map((t,i) => {
+          const isCur = i===activeIdx, isDone = i<activeIdx;
+          const oMin = t.originalMin||t.min, cSec = getStepTargetSec(i);
+          const liveExtra = t.addedSec ? ` <span class="text-emerald-300">(+${Math.round(t.addedSec/60)} мин)</span>` : '';
+          const b = (t.compressedSec!=null && cSec<oMin*60)
+            ? `<span class="line-through mr-1">${esc(oMin)} мин</span><span class="text-amber-300">→ ${(cSec/60).toFixed(1)} мин ⚡</span>${liveExtra}`
+            : `(${esc(oMin)} мин)${liveExtra}`;
+          return `<div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded':''} ${isDone?'line-through text-slate-500':''}"><div class="flex items-center gap-2 truncate"><span class="text-slate-500 text-xs">⋮⋮</span><span class="truncate">${i+1}. ${esc(t.title)}</span><span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span></div><button type="button" onclick="removeTask(${i})" class="text-rose-400 px-2 font-bold row-btn">✕</button></div>`;
+        }).join('');
+        document.querySelectorAll('#tasksContainer .task-row').forEach((r,i) => attachRowTouchHandlers(r,i));
+      } catch (err) {
+        const vs = document.getElementById('voiceStatus');
+        if (vs) vs.textContent = `Ошибка отрисовки: ${err.message}`;
+      }
+    }
+
+    setInterval(() => {
+      if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
+        stepElapsedSec = Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000);
+
+        const rem = stepDurationSec - stepElapsedSec;
+        const halfPoint = Math.round(stepDurationSec * 0.5);
+        const warnPoint = Math.max(1, Math.round(stepDurationSec * 0.2));
+
+        if (stepDurationSec >= 120 && rem === halfPoint && !warned50) {
+          warned50 = true; saveSession(); playBeep(660,0.11,2); vibrate(80);
+          speakRu(`Половина времени. Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`);
+        }
+        if (rem === warnPoint && !warned20) {
+          warned20 = true; saveSession(); playBeep(880,0.15,2); vibrate([60,40,60]);
+          speakRu(`Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`, () => openAutoVoiceWindow5Sec());
+        }
+        if (rem === 0) {
+          playBeep(440,0.3,3); vibrate([150,80,150]);
+          speakRu(`Время на ${tasks[activeIdx].title} вышло!`, () => openAutoVoiceWindow5Sec());
+        }
+        if (rem < 0) {
+          const overMin = Math.floor(Math.abs(rem) / 60);
+          if (overMin >= 1 && overMin > lastOvertimeWarnMin) {
+            lastOvertimeWarnMin = overMin;
+            saveSession();
+            playBeep(360,0.25,2);
+            speakRu(`Просрочка ${overMin} минут`, () => openAutoVoiceWindow5Sec());
+          }
+        }
+      }
+      render();
+    }, 500);
+
+    try {
+      openTemplateConstructor(activeTemplateIdx);
+      renderTemplates();
+      renderJournal();
+      render();
+    } catch (err) {
+      const vs = document.getElementById('voiceStatus');
+      if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
+    }
+  </script>
+</body>
+</html>
