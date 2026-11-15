@@ -971,4 +971,921 @@
 
       // 10. Добавление новых дел (одиночных или списком)
       const hasAddKeyword = /^(?:добавь|добавить|впиши|закинь|создай)(?:\s|$)/i.test(text);
-      const hasMinutesPattern = /\
+      const hasMinutesPattern = /\d+(?:[.,]\d+)?\s*(?:минут[ауы]?|мин|м)?$/i.test(text);
+      if (hasAddKeyword || hasMinutesPattern) {
+        const addedCount = extractTaskItemsFromText(text, tasks, hasAddKeyword);
+        if (addedCount > 0) {
+          saveTasks();
+          render();
+          const lastTask = tasks[tasks.length - 1];
+          if (addedCount === 1 && lastTask) {
+            speakRu(`Добавлено: ${lastTask.title}, ${lastTask.min} минут`);
+            showToast(`＋ Добавлено: ${lastTask.title} (${lastTask.min} мин)`);
+          } else {
+            speakRu(`Добавлено пунктов: ${addedCount}`);
+            showToast(`＋ Добавлено пунктов: ${addedCount}`);
+          }
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function parseVoiceChain(fullText) {
+      const normalized = normalizeSpokenNumbers(fullText).trim();
+      if (!normalized) return false;
+
+      // Если это перечисление дел для добавления («добавь А 10 минут, Б 5 минут»), отдаём сразу в interpretSinglePhrase
+      if (/^(?:добавь|добавить|впиши|закинь)\b/i.test(normalized) && !/\b(?:удали|убери|поменяй|сделай|поставь|пауза|дальше)\b/i.test(normalized)) {
+        return interpretSinglePhrase(normalized);
+      }
+
+      // Иначе режем на отдельные команды по союзам перед ключевыми глаголами
+      const parts = normalized
+        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+)(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)\b)/i)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      let anyOk = false;
+      for (const p of parts) {
+        if (interpretSinglePhrase(p)) anyOk = true;
+      }
+      return anyOk;
+    }
+
+    function cleanTemplateTitle(raw) {
+      return raw
+        .replace(/^(?:добавь|создай|сделай|заведи|назови|дай|переименуй)\s+/i, '')
+        .replace(/^(?:новый|этот|его)\s+/i, '')
+        .replace(/^(?:название|имя)\s+/i, '')
+        .replace(/^шаблон\s+/i, '')
+        .replace(/^(?:название|имя)\s+/i, '')
+        .replace(/\s+(?:такой-то|такой|шаблон)$/i, '')
+        .trim();
+    }
+
+    function parseConstructorVoiceDictation(fullText) {
+      const normalized = normalizeSpokenNumbers(fullText).trim();
+      if (!normalized) return false;
+
+      const nameInput = document.getElementById('constructorNameInput');
+      let remaining = normalized;
+      let nameUpdated = false;
+
+      // Вариант 1: название шаблона в начале
+      const explicitNameMatch = remaining.match(
+        /^(?:(?:добавь|создай|сделай|заведи|назови|дай)\s+)?(?:новый\s+)?(?:название\s+шаблона|имя\s+шаблона|название|имя|шаблон|назови)\s+(.+?)(?:,?\s+(?:добавь|впиши|закинь|список|дела|пункты|пункт|задачи|первый|1-й)(?:\s|$)|$)/i
+      );
+
+      if (explicitNameMatch && explicitNameMatch[1]) {
+        const cleanedName = cleanTemplateTitle(explicitNameMatch[1]);
+        if (cleanedName) {
+          const capName = cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1);
+          if (nameInput) nameInput.value = capName;
+          nameUpdated = true;
+          const matchEnd = explicitNameMatch.index + explicitNameMatch[0].length;
+          remaining = remaining.slice(matchEnd).trim();
+        }
+      } else {
+        // Вариант 2: название шаблона в конце фразы («разминка 10, бег 20, назови шаблон Тренировка»)
+        const endNameMatch = remaining.match(/^(.+?)(?:,?\s+(?:назови|дай\s+название|имя\s+шаблона|название\s+шаблона|шаблон)\s+(.+))$/i);
+        if (endNameMatch && endNameMatch[2]) {
+          const cleanedName = cleanTemplateTitle(endNameMatch[2]);
+          if (cleanedName) {
+            const capName = cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1);
+            if (nameInput) nameInput.value = capName;
+            nameUpdated = true;
+            remaining = endNameMatch[1].trim();
+          }
+        }
+      }
+
+      const addedCount = extractTaskItemsFromText(remaining, constructorDraftTasks, true);
+      if (addedCount > 0 || nameUpdated) {
+        renderConstructor();
+        showToast(`🎙 Шаблон обновлен (${addedCount} пунктов)`);
+        return true;
+      }
+      return false;
+    }
+
+    function stopActiveRecognition(applyPending = false) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+      clearTimeout(autoWindowTimer);
+      autoWindowTimer = null;
+
+      const prevMode = voiceMode;
+      const joined = latestTranscript.trim();
+      latestTranscript = '';
+      voiceMode = null;
+
+      const mainBtn = document.getElementById('voiceCmdBtn');
+      const ctorBtn = document.getElementById('constructorVoiceBtn');
+      if (mainBtn) mainBtn.classList.remove('mic-active');
+      if (ctorBtn) ctorBtn.classList.remove('mic-active');
+
+      if (activeRecognition) {
+        const rec = activeRecognition;
+        activeRecognition = null;
+        try { rec.onend = null; rec.onerror = null; rec.onresult = null; rec.stop(); } catch(e){}
+      }
+
+      if (applyPending && joined) {
+        if (prevMode === 'constructor') {
+          const ok = parseConstructorVoiceDictation(joined);
+          const ctorStatus = document.getElementById('constructorVoiceStatus');
+          if (ctorStatus) ctorStatus.textContent = ok ? `Применено: «${joined}»` : `Не распознано: «${joined}»`;
+          setTimeout(() => { if (ctorStatus) ctorStatus.textContent = ''; }, 3500);
+        } else {
+          const statusEl = document.getElementById('voiceStatus');
+          if (statusEl) statusEl.textContent = `Применяю: «${joined}»`;
+          const ok = parseVoiceChain(joined);
+          if (!ok) showToast('⚠️ Команда не распознана');
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3500);
+        }
+      }
+    }
+
+    function resetSilenceTimer(ms = 3000) {
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (voiceMode === 'main' || voiceMode === 'constructor') {
+          stopActiveRecognition(true);
+        }
+      }, ms);
+    }
+
+    function startSpeechSession(mode) {
+      if (voiceMode === mode) {
+        stopActiveRecognition(true);
+        return;
+      }
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const isCtor = mode === 'constructor';
+      const statusEl = document.getElementById(isCtor ? 'constructorVoiceStatus' : 'voiceStatus');
+      const btnEl = document.getElementById(isCtor ? 'constructorVoiceBtn' : 'voiceCmdBtn');
+
+      stopActiveRecognition(false);
+      voiceMode = mode;
+      latestTranscript = '';
+      if (btnEl) btnEl.classList.add('mic-active');
+      if (statusEl) statusEl.textContent = '🎙 Запускаю микрофон...';
+
+      if (!SpeechRecognition) {
+        if (statusEl) statusEl.textContent = 'Браузер не поддерживает SpeechRecognition. Откройте в Google Chrome.';
+        if (btnEl) btnEl.classList.remove('mic-active');
+        voiceMode = null;
+        return;
+      }
+
+      try { window.speechSynthesis.cancel(); } catch(e){}
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
+
+      const rec = new SpeechRecognition();
+      rec.lang = 'ru-RU';
+      rec.continuous = false;
+      rec.interimResults = true;
+      activeRecognition = rec;
+
+      rec.onstart = () => {
+        if (statusEl) statusEl.textContent = isCtor
+          ? '🎙 Надиктуйте название шаблона и список дел с минутами...'
+          : '🎙 Слушаю команду (авто-стоп через 3 сек тишины)...';
+      };
+
+      rec.onresult = (event) => {
+        const last = event.results[event.results.length - 1];
+        const txt = (last && last[0] ? last[0].transcript : '').trim();
+        if (txt) {
+          latestTranscript = txt;
+          if (statusEl) statusEl.textContent = `🎙 Записано: «${latestTranscript}»`;
+          resetSilenceTimer(3000);
+        }
+      };
+      rec.onerror = (event) => {
+        const errCode = event && event.error ? ` (${event.error})` : '';
+        if (statusEl) statusEl.textContent = `Ошибка микрофона или нет доступа${errCode}`;
+        stopActiveRecognition(false);
+      };
+      rec.onend = () => {
+        if (voiceMode === mode && activeRecognition === rec) {
+          stopActiveRecognition(true);
+        }
+      };
+
+      try {
+        rec.start();
+      } catch(e) {
+        if (statusEl) statusEl.textContent = `Не удалось запустить микрофон (${e.message || 'error'})`;
+        stopActiveRecognition(false);
+      }
+    }
+
+    function toggleVoiceCommand() {
+      startSpeechSession('main');
+    }
+    function toggleConstructorVoice() {
+      startSpeechSession('constructor');
+    }
+
+    function openAutoVoiceWindow5Sec() {
+      if (document.getElementById('silentModeToggle').checked) return;
+      if (!document.getElementById('autoVoiceWindowToggle').checked) return;
+      if (voiceMode === 'main' || voiceMode === 'constructor') return;
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      stopActiveRecognition(false);
+      try { window.speechSynthesis.cancel(); } catch(e){}
+      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
+
+      voiceMode = 'auto';
+      recognizedInCurrentWindow = false;
+      const statusEl = document.getElementById('voiceStatus');
+      const btnEl = document.getElementById('voiceCmdBtn');
+      if (btnEl) btnEl.classList.add('mic-active');
+      if (statusEl) statusEl.textContent = '🎙 Слушаю 5 сек (скажите «дальше», «пауза», «накинь 2», «закройся»)...';
+
+      const rec = new SpeechRecognition();
+      rec.lang = 'ru-RU';
+      rec.continuous = false;
+      rec.interimResults = false;
+      activeRecognition = rec;
+
+      autoWindowTimer = setTimeout(() => {
+        if (!recognizedInCurrentWindow) {
+          stopActiveRecognition(false);
+          if (statusEl) statusEl.textContent = '';
+        }
+      }, 5000);
+
+      rec.onresult = (event) => {
+        const last = event.results[event.results.length - 1];
+        const phrase = (last && last[0] ? last[0].transcript : '').trim();
+        if (!phrase) return;
+        if (statusEl) statusEl.textContent = `🎙 Услышано: «${phrase}»`;
+        const matched = parseVoiceChain(phrase);
+        if (matched) {
+          recognizedInCurrentWindow = true;
+          clearTimeout(autoWindowTimer);
+          autoWindowTimer = setTimeout(() => {
+            stopActiveRecognition(false);
+            if (statusEl) statusEl.textContent = '';
+          }, 3000);
+        } else {
+          stopActiveRecognition(false);
+          if (statusEl) statusEl.textContent = '';
+        }
+      };
+      rec.onerror = () => {
+        stopActiveRecognition(false);
+        if (statusEl) statusEl.textContent = '';
+      };
+      rec.onend = () => {
+        if (voiceMode === 'auto' && activeRecognition === rec) {
+          stopActiveRecognition(false);
+          if (statusEl) statusEl.textContent = '';
+        }
+      };
+
+      try { rec.start(); } catch(e){ stopActiveRecognition(false); }
+    }
+
+    function handleMainBtn() {
+      vibrate(30);
+      stopActiveRecognition(false);
+      if (activeIdx === -1 || activeIdx >= tasks.length) {
+        if (tasks.length === 0) { showToast('⚠️ Добавьте задачи!'); return; }
+        savedSec = 0; routineStats = []; paused = false; lastOvertimeWarnMin = 0;
+        tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; t.addedSec=0; });
+        document.getElementById('summaryCard').classList.add('hidden');
+        startStep(0);
+      } else {
+        const diff = stepDurationSec - stepElapsedSec;
+        if (diff > 0) savedSec += diff;
+        routineStats.push({
+          title: tasks[activeIdx].title,
+          plannedSec: Math.round(tasks[activeIdx].min * 60),
+          liveAdjSec: tasks[activeIdx].addedSec || 0,
+          actualSec: Math.max(1, stepElapsedSec),
+          skipped: false
+        });
+        if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
+        else finishRoutine();
+      }
+    }
+    function startStep(idx) {
+      activeIdx = idx; stepStartMs = Date.now(); totalPausedMs = 0; paused = false; stepElapsedSec = 0;
+      warned50 = false; warned20 = false; lastOvertimeWarnMin = 0;
+      let cInfo = (document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
+        ? compressToDeadline(false, idx) : { compressed:false, lateMin:0 };
+      stepDurationSec = getStepTargetSec(idx);
+      enableKeepAlive(); saveSession(); playBeep(700,0.1,1);
+
+      let sp = `Дальше: ${tasks[idx].title}.`;
+      if (cInfo.compressed) sp += ` Сжато.`;
+      speakRu(sp);
+      render();
+    }
+    function togglePause() {
+      if (activeIdx < 0 || activeIdx >= tasks.length) return;
+      paused = !paused;
+      if (paused) { pauseStartMs = Date.now(); speakRu('Пауза'); showToast('⏸ Пауза'); }
+      else { totalPausedMs += (Date.now() - pauseStartMs); speakRu('Продолжаем'); showToast('▶ Продолжаем'); }
+      saveSession(); render();
+    }
+    function skipStep() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) return;
+      vibrate(30);
+      stopActiveRecognition(false);
+      routineStats.push({
+        title: tasks[activeIdx].title,
+        plannedSec: Math.round(tasks[activeIdx].min * 60),
+        liveAdjSec: tasks[activeIdx].addedSec || 0,
+        actualSec: stepElapsedSec,
+        skipped: true
+      });
+      if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
+      else finishRoutine();
+    }
+    function addSavedMinute() {
+      if (activeIdx >= 0 && activeIdx < tasks.length) {
+        if (savedSec >= 60) {
+          savedSec -= 60;
+          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
+          showToast('⏱ +1 минута из запаса');
+        } else {
+          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
+          showToast('⏱ +1 минута к текущему');
+        }
+        stepDurationSec = getStepTargetSec(activeIdx);
+        saveSession(); render();
+      }
+    }
+    function confirmReset() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) { resetRoutine(); return; }
+      if (confirm('Сбросить прогресс?')) resetRoutine();
+    }
+
+    function finishRoutine() {
+      activeIdx = tasks.length; document.body.className = 'pb-16';
+      stopActiveRecognition(false);
+      playBeep(880,0.15,3); vibrate([100,50,100]);
+      disableKeepAlive();
+
+      let totalPlan = 0, totalAct = 0;
+      routineStats.forEach(s => {
+        totalPlan += (s.plannedSec + (s.liveAdjSec || 0));
+        if (!s.skipped) totalAct += s.actualSec;
+      });
+
+      clearSession();
+      journal.push({
+        date: Date.now(),
+        templateId: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].id : null,
+        templateName: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].name : 'Шаблон',
+        totalPlan,
+        totalActual: totalAct,
+        stats: routineStats
+      });
+      if (journal.length > 100) journal = journal.slice(-100);
+      try {
+        localStorage.setItem('m_journal', JSON.stringify(journal));
+      } catch (e) {
+        showToast('⚠️ Журнал не сохранился: память переполнена');
+      }
+
+      renderSummaryCard(routineStats);
+      renderJournal();
+      render();
+      speakRu('Отличная работа! Все ритуалы завершены.', () => openAutoVoiceWindow5Sec());
+    }
+    function resetRoutine() {
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0;
+      stopActiveRecognition(false);
+      tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
+      document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
+      disableKeepAlive(); clearSession(); render();
+    }
+
+    function renderSummaryCard(stats) {
+      const card = document.getElementById('summaryCard');
+      const listEl = document.getElementById('summaryList');
+      const badgeEl = document.getElementById('summaryTotalBadge');
+      const totalsEl = document.getElementById('summaryTotalsRow');
+      const sugEl = document.getElementById('summarySuggestions');
+      if (!stats || !stats.length) return;
+      card.classList.remove('hidden');
+
+      let tPlan = 0, tAct = 0;
+      pendingSuggestions = [];
+
+      listEl.innerHTML = stats.map((s, i) => {
+        const effectivePlan = s.plannedSec + (s.liveAdjSec || 0);
+        tPlan += effectivePlan;
+        if (!s.skipped) tAct += s.actualSec;
+        const diff = s.actualSec - effectivePlan;
+        const liveNote = s.liveAdjSec ? ` <span class="text-amber-300">(live ${fmtSec(-s.liveAdjSec)})</span>` : '';
+        let b = s.skipped
+          ? `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Пропуск</span>`
+          : (diff <= 0
+              ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300">-${fmtSec(Math.abs(diff))}</span>`
+              : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300">+${fmtSec(diff)}</span>`);
+
+        let suggestedMin = Math.max(0.5, Math.round((s.plannedSec / 60) * 2) / 2);
+        if (!s.skipped) {
+          const rawTargetMin = Math.max(0.5, Math.round((s.actualSec / 60) * 2) / 2);
+          const deltaMin = +(rawTargetMin - suggestedMin).toFixed(1);
+          if (Math.abs(deltaMin) >= 0.5) suggestedMin = rawTargetMin;
+        }
+        pendingSuggestions.push({
+          idx: i,
+          title: s.title,
+          suggestedMin,
+          enabled: Math.abs(suggestedMin - Math.round((s.plannedSec / 60) * 2) / 2) >= 0.5
+        });
+
+        return `<div class="flex justify-between items-center bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
+          <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}${liveNote}</span>
+          <div class="flex gap-2 text-xs items-center flex-shrink-0">
+            <span>План: ${fmtSec(effectivePlan)}</span>
+            <span class="text-white">Факт: ${s.skipped?'-':fmtSec(s.actualSec)}</span>
+            ${b}
+          </div>
+        </div>`;
+      }).join('');
+
+      sugEl.innerHTML = pendingSuggestions.map((item, idx) => `
+        <label class="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 px-2.5 py-1.5 rounded-lg cursor-pointer">
+          <span class="flex items-center gap-2 truncate">
+            <input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleSuggestion(${idx}, this.checked)" class="accent-emerald-400" />
+            <span class="truncate text-slate-200">${esc(item.title)}</span>
+          </span>
+          <span class="flex items-center gap-1 flex-shrink-0">
+            <button type="button" onclick="event.preventDefault();stepSuggestionMin(${idx}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">−</button>
+            <span id="sugMin_${idx}" class="font-extrabold text-sky-300 tabular-nums px-1">${item.suggestedMin} мин</span>
+            <button type="button" onclick="event.preventDefault();stepSuggestionMin(${idx}, 0.5)" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">+</button>
+          </span>
+        </label>
+      `).join('');
+
+      const tDiff = tAct - tPlan;
+      if (tDiff <= 0) {
+        badgeEl.textContent = `Быстрее на ${fmtSec(Math.abs(tDiff))}`;
+        badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600/50 tabular-nums';
+      } else {
+        badgeEl.textContent = `Дольше на +${fmtSec(tDiff)}`;
+        badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-600/50 tabular-nums';
+      }
+      totalsEl.innerHTML = `<span>Итого:</span><span>План ${fmtSec(tPlan)} / Факт <strong class="text-sky-400">${fmtSec(tAct)}</strong></span>`;
+    }
+
+    function toggleSuggestion(idx, checked) {
+      if (pendingSuggestions[idx]) pendingSuggestions[idx].enabled = checked;
+    }
+    function stepSuggestionMin(idx, delta) {
+      if (!pendingSuggestions[idx]) return;
+      pendingSuggestions[idx].suggestedMin = Math.max(0.5, +(pendingSuggestions[idx].suggestedMin + delta).toFixed(1));
+      pendingSuggestions[idx].enabled = true;
+      const el = document.getElementById(`sugMin_${idx}`);
+      if (el) el.textContent = `${pendingSuggestions[idx].suggestedMin} мин`;
+    }
+
+    function getNextVersionName(baseName) {
+      const cleanBase = baseName.replace(/\s*v\d+(?:\.\d+)?$/i, '').trim();
+      const regex = new RegExp(`^${cleanBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*v(\\d+)\\.0$`, 'i');
+      let maxVer = 1;
+      customTemplates.forEach(t => {
+        const m = t.name.match(regex);
+        if (m) maxVer = Math.max(maxVer, parseInt(m[1], 10));
+      });
+      return `${cleanBase} v${maxVer + 1}.0`;
+    }
+
+    function applySummaryToTemplate(asNewVersion) {
+      if (!pendingSuggestions.length) return;
+      const sourceTpl = customTemplates[activeTemplateIdx] || customTemplates[0];
+      const updatedTasks = sourceTpl.tasks.map((t, i) => {
+        const sug = pendingSuggestions[i];
+        const nextMin = (sug && sug.enabled) ? sug.suggestedMin : t.min;
+        return { title: t.title, min: nextMin, originalMin: nextMin, compressedSec: null, addedSec: 0 };
+      });
+
+      if (asNewVersion) {
+        const newName = getNextVersionName(sourceTpl.name);
+        customTemplates.push({ id: Date.now(), name: newName, tasks: updatedTasks });
+        activeTemplateIdx = customTemplates.length - 1;
+        showToast(`🆕 Создан шаблон «${newName}»`);
+      } else {
+        sourceTpl.tasks = updatedTasks;
+        showToast(`💾 Шаблон «${sourceTpl.name}» обновлён`);
+      }
+
+      localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+      tasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
+      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      constructorEditIdx = activeTemplateIdx;
+      constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
+      renderTemplates();
+      renderConstructor();
+      render();
+    }
+
+    function openTemplateConstructor(idx) {
+      if (idx >= 0 && customTemplates[idx]) {
+        constructorEditIdx = idx;
+        document.getElementById('constructorModeLabel').textContent = `Редактирование: ${customTemplates[idx].name}`;
+        document.getElementById('constructorNameInput').value = customTemplates[idx].name;
+        constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
+      } else {
+        constructorEditIdx = -1;
+        document.getElementById('constructorModeLabel').textContent = 'Новый шаблон';
+        document.getElementById('constructorNameInput').value = '';
+        constructorDraftTasks = [];
+      }
+      renderConstructor();
+    }
+
+    function renderConstructor() {
+      const list = document.getElementById('constructorTasksList');
+      const totalEl = document.getElementById('constructorTotalMin');
+      if (!list || !totalEl) return;
+      const totalMin = constructorDraftTasks.reduce((a, t) => a + (Number(t.min) || 0), 0);
+      totalEl.textContent = `Итого: ${totalMin} мин`;
+
+      if (!constructorDraftTasks.length) {
+        list.innerHTML = `<div class="text-[11px] text-slate-500 text-center py-2">Список пуст — надиктуйте микрофоном или добавьте ниже</div>`;
+        return;
+      }
+
+      list.innerHTML = constructorDraftTasks.map((t, i) => `
+        <div class="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+          <span class="text-slate-500 font-bold w-4">${i+1}.</span>
+          <input type="text" value="${esc(t.title)}"
+            onchange="updateConstructorTask(${i}, 'title', this.value)"
+            class="flex-1 bg-transparent text-white focus:outline-none" />
+          <input type="number" value="${esc(t.min)}" min="0.5" step="0.5"
+            onchange="updateConstructorTask(${i}, 'min', this.value)"
+            class="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-sky-300 font-bold tabular-nums" />
+          <span class="text-slate-500 text-[10px]">мин</span>
+          <button type="button" onclick="moveConstructorTask(${i}, -1)" class="px-1.5 text-slate-400 hover:text-white">↑</button>
+          <button type="button" onclick="moveConstructorTask(${i}, 1)" class="px-1.5 text-slate-400 hover:text-white">↓</button>
+          <button type="button" onclick="removeConstructorTask(${i})" class="px-1.5 text-rose-400 font-bold">✕</button>
+        </div>
+      `).join('');
+    }
+
+    function addConstructorTask() {
+      const titleInput = document.getElementById('constructorNewTaskTitle');
+      const minInput = document.getElementById('constructorNewTaskMin');
+      const title = titleInput.value.trim();
+      const min = parseFloat(minInput.value) || 5;
+      if (!title) return;
+      constructorDraftTasks.push({ title: title.charAt(0).toUpperCase() + title.slice(1), min });
+      titleInput.value = '';
+      renderConstructor();
+    }
+    function updateConstructorTask(i, field, val) {
+      if (!constructorDraftTasks[i]) return;
+      if (field === 'title') constructorDraftTasks[i].title = val.trim() || constructorDraftTasks[i].title;
+      if (field === 'min') constructorDraftTasks[i].min = Math.max(0.5, parseFloat(val) || 5);
+      renderConstructor();
+    }
+    function moveConstructorTask(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j >= constructorDraftTasks.length) return;
+      const [item] = constructorDraftTasks.splice(i, 1);
+      constructorDraftTasks.splice(j, 0, item);
+      renderConstructor();
+    }
+    function removeConstructorTask(i) {
+      constructorDraftTasks.splice(i, 1);
+      renderConstructor();
+    }
+
+    function saveConstructorTemplate(andStart) {
+      if (!constructorDraftTasks.length) {
+        showToast('⚠️ Добавьте хотя бы одно дело в шаблон');
+        return;
+      }
+      const nameInput = document.getElementById('constructorNameInput');
+      const name = nameInput.value.trim() || `Шаблон ${customTemplates.length + 1}`;
+      const cleanTasks = constructorDraftTasks.map(t => ({
+        title: t.title,
+        min: Number(t.min) || 5,
+        originalMin: Number(t.min) || 5,
+        compressedSec: null,
+        addedSec: 0
+      }));
+
+      if (constructorEditIdx >= 0 && customTemplates[constructorEditIdx]) {
+        customTemplates[constructorEditIdx].name = name;
+        customTemplates[constructorEditIdx].tasks = cleanTasks;
+        activeTemplateIdx = constructorEditIdx;
+      } else {
+        customTemplates.push({ id: Date.now(), name, tasks: cleanTasks });
+        activeTemplateIdx = customTemplates.length - 1;
+        constructorEditIdx = activeTemplateIdx;
+      }
+
+      localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      renderTemplates();
+
+      if (andStart) {
+        tasks = JSON.parse(JSON.stringify(cleanTasks));
+        resetRoutine();
+        handleMainBtn();
+        showToast(`▶ Запущен шаблон «${name}»`);
+      } else {
+        if (activeIdx === -1 || activeIdx >= tasks.length) {
+          tasks = JSON.parse(JSON.stringify(cleanTasks));
+          render();
+        }
+        showToast(`💾 Шаблон «${name}» сохранён`);
+      }
+    }
+
+    function renderJournal() {
+      const days = document.getElementById('journalFilter').value;
+      const chart = document.getElementById('chartContainer');
+      const tips = document.getElementById('tipsContainer');
+      if (!chart || !tips) return;
+
+      let cutoff = 0;
+      if (days !== 'all') cutoff = Date.now() - (parseInt(days, 10) * 24 * 60 * 60 * 1000);
+      const filtered = journal.filter(j => j.date >= cutoff);
+
+      if (filtered.length === 0) {
+        chart.innerHTML = '<div class="text-xs text-slate-500 w-full text-center pb-4">Нет данных за этот период</div>';
+        tips.innerHTML = 'Соберите статистику завершённых дней, чтобы получить советы.';
+        return;
+      }
+
+      const toShow = filtered.slice(-15);
+      chart.innerHTML = toShow.map(j => {
+        const pct = Math.min(100, Math.max(10, (j.totalActual / Math.max(1, j.totalPlan)) * 50));
+        const color = j.totalActual > j.totalPlan ? 'bg-rose-500' : 'bg-emerald-500';
+        return `<div class="w-full mx-0.5 rounded-t-sm chart-bar ${color}" style="height:${pct}%" title="${esc(new Date(j.date).toLocaleDateString())}"></div>`;
+      }).join('');
+
+      const taskFails = {};
+      filtered.forEach(j => {
+        (j.stats || []).forEach(s => {
+          if (s.skipped) return;
+          const plan = s.plannedSec + (s.liveAdjSec || 0);
+          const over = s.actualSec - plan;
+          if (over > 0) taskFails[s.title] = (taskFails[s.title] || []).concat(over);
+        });
+      });
+      let worstTask = null, maxAvg = 0;
+      for (const t in taskFails) {
+        const avg = taskFails[t].reduce((a, b) => a + b, 0) / taskFails[t].length;
+        if (avg > maxAvg) { maxAvg = avg; worstTask = t; }
+      }
+      if (worstTask && maxAvg > 60) {
+        tips.innerHTML = `💡 Чаще всего вы теряете время на шаге <b>«${esc(worstTask)}»</b> (в среднем перерасход +${Math.round(maxAvg/60)} мин). Примените совет в сводке или увеличьте план в конструкторе.`;
+      } else {
+        tips.innerHTML = '🔥 Вы отлично справляетесь! Критических просадок по времени не обнаружено.';
+      }
+    }
+
+    function renderTemplates() {
+      const cont = document.getElementById('templatesList');
+      if (!cont) return;
+      cont.innerHTML = customTemplates.map((t, i) => {
+        const isSelected = i === activeTemplateIdx;
+        return `
+          <div class="flex items-center bg-slate-800 border ${isSelected ? 'border-sky-400' : 'border-slate-600'} rounded-xl overflow-hidden text-xs">
+            <button type="button" onclick="selectTemplate(${i})" class="px-3 py-2 text-white hover:bg-slate-700 font-bold">${isSelected ? '✓ ' : ''}${esc(t.name)}</button>
+            <button type="button" onclick="openTemplateConstructor(${i})" title="Редактировать" class="px-2 py-2 text-sky-300 hover:bg-slate-700 border-l border-slate-600">✎</button>
+            <button type="button" onclick="deleteTemplate(${i})" title="Удалить" class="px-2 py-2 text-rose-400 hover:bg-rose-950 border-l border-slate-600">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+    function selectTemplate(idx) {
+      if (activeIdx > -1 && activeIdx < tasks.length) {
+        if (!confirm('Прервать текущую цепочку и загрузить выбранный шаблон?')) return;
+      }
+      activeTemplateIdx = idx;
+      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      tasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
+      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      openTemplateConstructor(idx);
+      resetRoutine();
+      renderTemplates();
+      showToast(`📂 Выбран: ${customTemplates[idx].name}`);
+    }
+    function deleteTemplate(idx) {
+      if (customTemplates.length <= 1) { showToast('⚠️ Должен остаться хотя бы один шаблон'); return; }
+      if (confirm('Удалить шаблон?')) {
+        customTemplates.splice(idx, 1);
+        if (activeTemplateIdx >= customTemplates.length) activeTemplateIdx = customTemplates.length - 1;
+        localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+        openTemplateConstructor(activeTemplateIdx);
+        renderTemplates();
+      }
+    }
+
+    function exportData() {
+      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null) };
+      const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
+    }
+    function importData(e) {
+      const file = e.target.files[0]; if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if(Array.isArray(data.templates)) localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
+          if(Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
+          if(data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
+          alert('Импорт успешен! Страница будет перезагружена.'); location.reload();
+        } catch(err) { alert('Ошибка чтения файла!'); }
+      }; reader.readAsText(file);
+    }
+
+    function addTask() {
+      const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
+      if(!t) return;
+      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:m, originalMin:m, compressedSec:null, addedSec:0 });
+      document.getElementById('newTaskTitle').value=''; saveTasks(); render();
+    }
+    function removeTask(i) {
+      if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
+      tasks.splice(i, 1); saveTasks(); render();
+    }
+    function moveTask(fromIdx, toIdx) {
+      if(fromIdx===toIdx || fromIdx<0 || toIdx<0 || fromIdx>=tasks.length || toIdx>=tasks.length) return;
+      const [moved] = tasks.splice(fromIdx, 1); tasks.splice(toIdx, 0, moved);
+      if(activeIdx >= 0 && activeIdx < tasks.length) {
+        if(activeIdx === fromIdx) activeIdx = toIdx;
+        else if(fromIdx < activeIdx && toIdx >= activeIdx) activeIdx--;
+        else if(fromIdx > activeIdx && toIdx <= activeIdx) activeIdx++;
+      }
+      saveTasks(); render(); vibrate(25);
+    }
+    function attachRowTouchHandlers(rowEl, idx) {
+      rowEl.addEventListener('touchstart', e => {
+        if(e.target.closest('button') || e.touches.length!==1) return;
+        const touch = e.touches[0];
+        dragState.startX = touch.clientX; dragState.startY = touch.clientY; dragState.fromIdx = idx; dragState.toIdx = idx; dragState.active = false;
+        clearTimeout(dragState.timerId);
+        dragState.timerId = setTimeout(() => {
+          dragState.active=true; vibrate(45); rowEl.classList.add('dragging');
+        }, 450);
+      }, {passive:true});
+      rowEl.addEventListener('touchmove', e => {
+        if(e.touches.length!==1) return;
+        const touch = e.touches[0];
+        if(!dragState.active) {
+          if(Math.abs(touch.clientX-dragState.startX)>12 || Math.abs(touch.clientY-dragState.startY)>12) { clearTimeout(dragState.timerId); dragState.timerId=null; }
+          return;
+        }
+        e.preventDefault();
+        const rows = Array.from(document.querySelectorAll('#tasksContainer .task-row'));
+        let closestIdx = dragState.fromIdx, minDist = Infinity;
+        rows.forEach((r, rIdx) => {
+          const rect = r.getBoundingClientRect(), dist = Math.abs(touch.clientY - (rect.top+rect.height/2));
+          if(dist < minDist) { minDist = dist; closestIdx = rIdx; }
+        });
+        dragState.toIdx = closestIdx;
+        rows.forEach((r,i) => { r.classList.remove('drop-target-top','drop-target-bottom'); if(i===closestIdx && i!==dragState.fromIdx) r.classList.add(closestIdx<dragState.fromIdx ? 'drop-target-top':'drop-target-bottom'); });
+      }, {passive:false});
+      const finishTouch = () => {
+        clearTimeout(dragState.timerId); dragState.timerId=null;
+        if(dragState.active) {
+          const from = dragState.fromIdx, to = dragState.toIdx; dragState.active=false;
+          document.querySelectorAll('#tasksContainer .task-row').forEach(r=>r.classList.remove('dragging','drop-target-top','drop-target-bottom'));
+          if(from!==to) moveTask(from,to);
+        }
+      };
+      rowEl.addEventListener('touchend', finishTouch); rowEl.addEventListener('touchcancel', finishTouch);
+    }
+
+    function render() {
+      try {
+        const now = new Date();
+        document.getElementById('clockNow').textContent = now.toTimeString().slice(0,8);
+        const remTotalSec = getRemainingTotalSec(activeIdx);
+        const forecast = new Date(now.getTime() + remTotalSec*1000);
+        document.getElementById('clockForecast').textContent = forecast.toTimeString().slice(0,8);
+
+        const tplBadge = document.getElementById('activeTemplateBadge');
+        if (tplBadge && customTemplates[activeTemplateIdx]) {
+          tplBadge.textContent = `📂 ${customTemplates[activeTemplateIdx].name}`;
+        }
+
+        const useDl = document.getElementById('useDeadline').checked;
+        const dlEl = document.getElementById('deadlineDiff');
+        if(useDl) {
+          const diffMin = Math.round((getDeadlineDate(now) - forecast)/60000);
+          if(diffMin>=0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
+          else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
+        } else { dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8'; }
+
+        const sb = document.getElementById('savedBank');
+        if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
+
+        const bBadge = document.getElementById('keepAliveBadge');
+        bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран и аудио защищены</span>' : '<span>🔓 Ожидание старта</span>';
+        bBadge.className = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300' : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400';
+
+        const tDisp = document.getElementById('timerDisplay'), pBar = document.getElementById('stepProgressBar'), mBtn = document.getElementById('mainBtn'), pBtn = document.getElementById('pauseBtn');
+        if (activeIdx === -1) {
+          document.getElementById('stepCounter').textContent = `Всего задач: ${tasks.length}`;
+          document.getElementById('currentTaskName').textContent = 'Нажмите Старт';
+          tDisp.textContent = fmtSec(remTotalSec); tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white';
+          pBar.style.width = '100%'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300';
+          document.getElementById('mainBtnTitle').textContent = '▶ СТАРТ'; document.getElementById('mainBtnSub').textContent = tasks[0]?`Первым делом: ${tasks[0].title}`:'Пустой список';
+          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
+        } else if (activeIdx < tasks.length) {
+          const rem = stepDurationSec - stepElapsedSec;
+          document.getElementById('stepCounter').textContent = `Шаг ${activeIdx+1} из ${tasks.length}`;
+          document.getElementById('currentTaskName').textContent = tasks[activeIdx].title + (paused ? ' ⏸' : '');
+          tDisp.textContent = fmtSec(rem);
+          document.getElementById('mainBtnTitle').textContent = '✓ ГОТОВО';
+          document.getElementById('mainBtnSub').textContent = tasks[activeIdx+1] ? `Дальше: ${tasks[activeIdx+1].title}` : 'Завершить цепочку 🏁';
+          pBtn.textContent = paused ? '▶' : '⏸';
+          pBar.style.width = `${Math.max(0, Math.min(100, (rem/Math.max(1, stepDurationSec))*100))}%`;
+
+          if (rem < 0) { document.body.className = 'pb-16 state-over'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-rose-400'; pBar.className = 'h-full bg-rose-500 transition-all duration-300'; }
+          else if (rem <= stepDurationSec * 0.2) { document.body.className = 'pb-16 state-warn'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-amber-300'; pBar.className = 'h-full bg-amber-400 transition-all duration-300'; }
+          else { document.body.className = 'pb-16 state-ok'; tDisp.className = 'text-6xl sm:text-7xl font-black tabular-nums leading-none my-2 text-white'; pBar.className = 'h-full bg-emerald-500 transition-all duration-300'; }
+          mBtn.classList.toggle('paused', paused);
+        } else {
+          document.getElementById('stepCounter').textContent = 'Отличная работа!'; document.getElementById('currentTaskName').textContent = 'Все ритуалы завершены 🎉';
+          tDisp.textContent = '00:00'; pBar.style.width = '0%';
+          document.getElementById('mainBtnTitle').textContent = '🔄 ЗАНОВО'; document.getElementById('mainBtnSub').textContent = 'Посмотреть сводку';
+          mBtn.classList.remove('paused'); pBtn.textContent = '⏸';
+        }
+
+        document.getElementById('chainTotalMin').textContent = `Итого: ${Math.round(tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0)/60)} мин`;
+        document.getElementById('tasksContainer').innerHTML = tasks.map((t,i) => {
+          const isCur = i===activeIdx, isDone = i<activeIdx;
+          const oMin = t.originalMin||t.min, cSec = getStepTargetSec(i);
+          const liveExtra = t.addedSec ? ` <span class="text-emerald-300">(+${Math.round(t.addedSec/60)} мин)</span>` : '';
+          const b = (t.compressedSec!=null && cSec<oMin*60)
+            ? `<span class="line-through mr-1">${esc(oMin)} мин</span><span class="text-amber-300">→ ${(cSec/60).toFixed(1)} мин ⚡</span>${liveExtra}`
+            : `(${esc(oMin)} мин)${liveExtra}`;
+          return `<div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded':''} ${isDone?'line-through text-slate-500':''}"><div class="flex items-center gap-2 truncate"><span class="text-slate-500 text-xs">⋮⋮</span><span class="truncate">${i+1}. ${esc(t.title)}</span><span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span></div><button type="button" onclick="removeTask(${i})" class="text-rose-400 px-2 font-bold row-btn">✕</button></div>`;
+        }).join('');
+        document.querySelectorAll('#tasksContainer .task-row').forEach((r,i) => attachRowTouchHandlers(r,i));
+      } catch (err) {
+        const vs = document.getElementById('voiceStatus');
+        if (vs) vs.textContent = `Ошибка отрисовки: ${err.message}`;
+      }
+    }
+
+    setInterval(() => {
+      if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
+        stepElapsedSec = Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000);
+
+        const rem = stepDurationSec - stepElapsedSec;
+        const halfPoint = Math.round(stepDurationSec * 0.5);
+        const warnPoint = Math.max(1, Math.round(stepDurationSec * 0.2));
+
+        if (stepDurationSec >= 120 && rem === halfPoint && !warned50) {
+          warned50 = true; saveSession(); playBeep(660,0.11,2); vibrate(80);
+          speakRu(`Половина времени. Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`);
+        }
+        if (rem === warnPoint && !warned20) {
+          warned20 = true; saveSession(); playBeep(880,0.15,2); vibrate([60,40,60]);
+          speakRu(`Осталось ${rem>=60 ? Math.ceil(rem/60)+' минут' : rem+' секунд'}`, () => openAutoVoiceWindow5Sec());
+        }
+        if (rem === 0) {
+          playBeep(440,0.3,3); vibrate([150,80,150]);
+          speakRu(`Время на ${tasks[activeIdx].title} вышло!`, () => openAutoVoiceWindow5Sec());
+        }
+        if (rem < 0) {
+          const overMin = Math.floor(Math.abs(rem) / 60);
+          if (overMin >= 1 && overMin > lastOvertimeWarnMin) {
+            lastOvertimeWarnMin = overMin;
+            saveSession();
+            playBeep(360,0.25,2);
+            speakRu(`Просрочка ${overMin} минут`, () => openAutoVoiceWindow5Sec());
+          }
+        }
+      }
+      render();
+    }, 500);
+
+    try {
+      openTemplateConstructor(activeTemplateIdx);
+      renderTemplates();
+      renderJournal();
+      render();
+    } catch (err) {
+      const vs = document.getElementById('voiceStatus');
+      if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
+    }
+  </script>
+</body>
+</html>
