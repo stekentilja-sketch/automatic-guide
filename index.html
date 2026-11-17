@@ -175,6 +175,10 @@
             class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs active:scale-95 transition">
             🆕 Сохранить как версию (v2.0 / v3.0)
           </button>
+          <button type="button" onclick="startOriginalTemplateFromSummary()"
+            class="sm:col-span-2 py-3 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-sm active:scale-95 transition">
+            ▶ Запустить исходный шаблон
+          </button>
         </div>
       </div>
     </div>
@@ -282,6 +286,7 @@
       </div>
 
       <div class="h-32 flex items-end justify-between gap-1 border-b border-slate-700 pb-1 px-1" id="chartContainer"></div>
+      <div id="journalList" class="space-y-2"></div>
 
       <div id="tipsContainer" class="text-xs text-amber-200 bg-amber-950/30 border border-amber-900/50 p-2.5 rounded-xl font-medium leading-relaxed">
         Соберите больше статистики, чтобы получить советы по оптимизации.
@@ -296,8 +301,6 @@
     </div>
 
   </div>
-
-  <audio id="silentHtmlAudio" loop playsinline class="hidden"></audio>
 
   <script>
     // 1. Канарейка целостности скобок после копирования
@@ -349,7 +352,7 @@
 
     let session = safeJsonParse(localStorage.getItem('m_active_session'), null);
     let tasks = [];
-    if (session && Array.isArray(session.tasks) && session.tasks.length && session.activeIdx > -1 && session.activeIdx < session.tasks.length) {
+    if (session && Array.isArray(session.tasks) && session.tasks.length && typeof session.activeIdx === 'number' && session.activeIdx >= -1 && session.activeIdx < session.tasks.length) {
       tasks = session.tasks;
       if (typeof session.activeTemplateIdx === 'number' && customTemplates[session.activeTemplateIdx]) {
         activeTemplateIdx = session.activeTemplateIdx;
@@ -364,6 +367,8 @@
 
     let activeIdx = (session && typeof session.activeIdx === 'number' && session.activeIdx < tasks.length) ? session.activeIdx : -1;
     let stepStartMs = session ? session.stepStartMs : 0;
+    let routineStartedAt = session ? (session.routineStartedAt || 0) : 0;
+    let forceOriginalRun = session ? !!session.forceOriginalRun : false;
     let totalPausedMs = session ? session.totalPausedMs : 0;
     let pauseStartMs = session ? session.pauseStartMs : 0;
     let paused = session ? session.paused : false;
@@ -391,14 +396,18 @@
     let autoWindowTimer = null;
     let recognizedInCurrentWindow = false;
     let latestTranscript = '';
+    let recognitionSessionId = 0;
 
     // Стек отмены действий (Undo)
     function pushUndo(label) {
       undoStack.push({
         label,
         tasks: JSON.parse(JSON.stringify(tasks)),
-        activeIdx,
-        stepDurationSec
+        activeIdx, stepDurationSec, stepElapsedSec, stepStartMs,
+        totalPausedMs, pauseStartMs, paused, savedSec,
+        warned50, warned20, warnedZero, lastOvertimeWarnMin,
+        routineStats: JSON.parse(JSON.stringify(routineStats)),
+        routineStartedAt, forceOriginalRun
       });
       if (undoStack.length > 10) undoStack.shift();
     }
@@ -419,7 +428,18 @@
         if (snap) {
           tasks = JSON.parse(JSON.stringify(snap.tasks));
           activeIdx = snap.activeIdx;
-          if (activeIdx >= 0 && activeIdx < tasks.length) stepDurationSec = getStepTargetSec(activeIdx);
+          stepDurationSec = snap.stepDurationSec || (activeIdx >= 0 && activeIdx < tasks.length ? getStepTargetSec(activeIdx) : 0);
+          stepElapsedSec = snap.stepElapsedSec || 0;
+          stepStartMs = snap.stepStartMs || 0;
+          totalPausedMs = snap.totalPausedMs || 0;
+          pauseStartMs = snap.pauseStartMs || 0;
+          paused = !!snap.paused;
+          savedSec = snap.savedSec || 0;
+          warned50 = !!snap.warned50; warned20 = !!snap.warned20; warnedZero = !!snap.warnedZero;
+          lastOvertimeWarnMin = snap.lastOvertimeWarnMin || 0;
+          routineStats = JSON.parse(JSON.stringify(snap.routineStats || []));
+          routineStartedAt = snap.routineStartedAt || 0;
+          forceOriginalRun = !!snap.forceOriginalRun;
           saveTasks(); saveSession(); render();
           showToast('↩ Действие отменено');
         }
@@ -448,23 +468,32 @@
     function saveSession() {
       const s = {
         activeIdx, activeTemplateIdx, stepStartMs, totalPausedMs, pauseStartMs,
-        paused, savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin, routineStats, tasks
+        paused, savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin,
+        routineStats, tasks, routineStartedAt, forceOriginalRun
       };
-      localStorage.setItem('m_active_session', JSON.stringify(s));
-      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      try {
+        localStorage.setItem('m_active_session', JSON.stringify(s));
+        localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      } catch (error) {
+        showToast('⚠️ Не удалось сохранить сессию: проверьте свободное место браузера');
+      }
     }
     function clearSession() {
       localStorage.removeItem('m_active_session');
       session = null;
+      routineStartedAt = 0;
+      forceOriginalRun = false;
     }
     function saveTasks() {
       const s = safeJsonParse(localStorage.getItem('m_active_session'), null) || {
         activeIdx, stepStartMs, totalPausedMs, pauseStartMs, paused,
-        savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin, routineStats
+        savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin, routineStats,
+        routineStartedAt, forceOriginalRun
       };
       s.tasks = tasks;
       s.activeTemplateIdx = activeTemplateIdx;
-      localStorage.setItem('m_active_session', JSON.stringify(s));
+      try { localStorage.setItem('m_active_session', JSON.stringify(s)); }
+      catch (error) { showToast('⚠️ Не удалось сохранить список дел'); }
     }
     function saveSettings() {
       localStorage.setItem('m_auto_compress', document.getElementById('autoCompressToggle').checked);
@@ -579,16 +608,6 @@
       return (sec < 0 ? '+' : '') + String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0');
     }
 
-    function createSilentWavBlobUrl() {
-      if (silentWavUrl) return silentWavUrl;
-      const sr = 8000, len = sr; const buf = new ArrayBuffer(44 + len * 2); const v = new DataView(buf);
-      const w = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
-      w(0,'RIFF'); v.setUint32(4,36+len*2,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true);
-      v.setUint16(20,1,true); v.setUint16(22,1,true); v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
-      v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,len*2,true);
-      return silentWavUrl = URL.createObjectURL(new Blob([buf], {type:'audio/wav'}));
-    }
-
     async function enableKeepAlive() {
       try {
         if ('wakeLock' in navigator && !wakeLock) {
@@ -596,24 +615,38 @@
           wakeLock.addEventListener('release', () => { wakeLock = null; });
         }
       } catch(e){}
-      try {
-        const a = document.getElementById('silentHtmlAudio');
-        if (!a.src) a.src = createSilentWavBlobUrl();
-        a.volume = 0.01; a.play().catch(()=>{});
-      } catch(e){}
-      keepAliveActive = true; render();
+      // Wake Lock удерживает экран включённым только пока браузер разрешает это.
+      // Бесшумный аудиопоток намеренно не запускаем: он может конфликтовать
+      // с аудиофокусом, распознаванием речи и музыкой в другом приложении.
+      keepAliveActive = !!wakeLock;
+      render();
     }
     function disableKeepAlive() {
       keepAliveActive = false;
       try { if(wakeLock){ wakeLock.release(); wakeLock=null; } } catch(e){}
-      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
       render();
     }
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        if (activeIdx >= 0 && activeIdx < tasks.length) enableKeepAlive();
-        render();
+      if (document.visibilityState === 'hidden') {
+        if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
+          stepElapsedSec = Math.max(0, Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000));
+          saveSession();
+        }
+        return;
       }
+      if (activeIdx >= 0 && activeIdx < tasks.length) {
+        if (!paused) stepElapsedSec = Math.max(0, Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000));
+        enableKeepAlive();
+        saveSession();
+      }
+      updateClockAndTimerUI();
+    });
+    window.addEventListener('pageshow', () => {
+      if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
+        stepElapsedSec = Math.max(0, Math.floor((Date.now() - stepStartMs - totalPausedMs) / 1000));
+        saveSession();
+      }
+      updateClockAndTimerUI();
     });
 
     // Фикс деградации автоужатия: базовое время всегда от originalMin
@@ -633,7 +666,8 @@
     }
     function getRemainingTotalSec(fromIdx = activeIdx) {
       if (tasks.length === 0) return 0;
-      if (fromIdx === -1 || fromIdx >= tasks.length) return tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0);
+      if (fromIdx >= tasks.length) return 0;
+      if (fromIdx === -1) return tasks.reduce((a,_,i)=>a+getStepTargetSec(i),0);
       let total = Math.max(0, stepDurationSec - stepElapsedSec);
       for (let i=fromIdx+1; i<tasks.length; i++) total += getStepTargetSec(i);
       return total;
@@ -659,7 +693,9 @@
         return { compressed:false, lateMin:0 };
       }
       if (isManual) pushUndo('Сжатие');
-      const ratio = Math.max(remCount*30, availSec) / currentUncompressedRemSec;
+      const minimumChainSec = remCount * 30;
+      const usableSec = Math.max(0, availSec);
+      const ratio = Math.min(1, Math.max(minimumChainSec, usableSec) / Math.max(1, currentUncompressedRemSec));
       for (let i=startIdx;i<tasks.length;i++) {
         if (tasks[i].originalMin == null) tasks[i].originalMin = tasks[i].min;
         const baseSec = (i===activeIdx && targetStartIdx===null)
@@ -793,7 +829,8 @@
       const clampedPos = Math.max(1, Math.min(tasks.length + 1, pos1Based));
       const insertIdx = clampedPos - 1;
       const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
-      tasks.splice(insertIdx, 0, { title: capTitle, min, originalMin: min, compressedSec: null, addedSec: 0 });
+      const safeMin = Math.max(0.5, Number(min) || 5);
+      tasks.splice(insertIdx, 0, { title: capTitle, min: safeMin, originalMin: safeMin, compressedSec: null, addedSec: 0 });
       if (activeIdx >= 0 && insertIdx <= activeIdx) activeIdx++;
       saveTasks();
       render();
@@ -803,7 +840,7 @@
 
     function adjustTaskDurationSec(idx, deltaSec, reasonLabel = '') {
       if (idx < 0 || idx >= tasks.length) return;
-      tasks[idx].addedSec = (tasks[idx].addedSec || 0) + deltaSec;
+      tasks[idx].addedSec = Math.max(-Math.max(0, getStepTargetSec(idx) - 30), (tasks[idx].addedSec || 0) + deltaSec);
       if (idx === activeIdx) {
         stepDurationSec = getStepTargetSec(idx);
       }
@@ -1149,6 +1186,7 @@
     }
 
     function stopActiveRecognition(applyPending = false) {
+      recognitionSessionId++;
       clearTimeout(silenceTimer);
       silenceTimer = null;
       clearTimeout(autoWindowTimer);
@@ -1207,6 +1245,7 @@
       const btnEl = document.getElementById(isCtor ? 'constructorVoiceBtn' : 'voiceCmdBtn');
 
       stopActiveRecognition(false);
+      const recognitionId = ++recognitionSessionId;
       voiceMode = mode;
       latestTranscript = '';
       if (btnEl) btnEl.classList.add('mic-active');
@@ -1220,7 +1259,6 @@
       }
 
       try { window.speechSynthesis.cancel(); } catch(e){}
-      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
 
       const rec = new SpeechRecognition();
       rec.lang = 'ru-RU';
@@ -1229,12 +1267,14 @@
       activeRecognition = rec;
 
       rec.onstart = () => {
+        if (recognitionId !== recognitionSessionId || activeRecognition !== rec) return;
         if (statusEl) statusEl.textContent = isCtor
           ? '🎙 Надиктуйте название шаблона и список дел с минутами...'
           : '🎙 Слушаю команду (авто-стоп через 3 сек тишины)...';
       };
 
       rec.onresult = (event) => {
+        if (recognitionId !== recognitionSessionId || activeRecognition !== rec) return;
         const last = event.results[event.results.length - 1];
         const txt = (last && last[0] ? last[0].transcript : '').trim();
         if (txt) {
@@ -1244,12 +1284,13 @@
         }
       };
       rec.onerror = (event) => {
+        if (recognitionId !== recognitionSessionId || activeRecognition !== rec) return;
         const errCode = event && event.error ? ` (${event.error})` : '';
         if (statusEl) statusEl.textContent = `Ошибка микрофона или нет доступа${errCode}`;
         stopActiveRecognition(false);
       };
       rec.onend = () => {
-        if (voiceMode === mode && activeRecognition === rec) {
+        if (recognitionId === recognitionSessionId && voiceMode === mode && activeRecognition === rec) {
           stopActiveRecognition(true);
         }
       };
@@ -1278,8 +1319,8 @@
       if (!SpeechRecognition) return;
 
       stopActiveRecognition(false);
+      const recognitionId = ++recognitionSessionId;
       try { window.speechSynthesis.cancel(); } catch(e){}
-      try { document.getElementById('silentHtmlAudio').pause(); } catch(e){}
 
       voiceMode = 'auto';
       recognizedInCurrentWindow = false;
@@ -1302,6 +1343,7 @@
       }, 5000);
 
       rec.onresult = (event) => {
+        if (recognitionId !== recognitionSessionId || activeRecognition !== rec) return;
         const last = event.results[event.results.length - 1];
         const phrase = (last && last[0] ? last[0].transcript : '').trim();
         if (!phrase) return;
@@ -1320,11 +1362,12 @@
         }
       };
       rec.onerror = () => {
+        if (recognitionId !== recognitionSessionId || activeRecognition !== rec) return;
         stopActiveRecognition(false);
         if (statusEl) statusEl.textContent = '';
       };
       rec.onend = () => {
-        if (voiceMode === 'auto' && activeRecognition === rec) {
+        if (recognitionId === recognitionSessionId && voiceMode === 'auto' && activeRecognition === rec) {
           stopActiveRecognition(false);
           if (statusEl) statusEl.textContent = '';
         }
@@ -1339,6 +1382,7 @@
       if (activeIdx === -1 || activeIdx >= tasks.length) {
         if (tasks.length === 0) { showToast('⚠️ Добавьте задачи!'); return; }
         savedSec = 0; routineStats = []; paused = false; lastOvertimeWarnMin = 0;
+        routineStartedAt = 0; forceOriginalRun = false;
         tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; t.addedSec=0; });
         document.getElementById('summaryCard').classList.add('hidden');
         startStep(0);
@@ -1347,9 +1391,12 @@
         if (diff > 0) savedSec += diff;
         routineStats.push({
           title: tasks[activeIdx].title,
-          plannedSec: Math.round(tasks[activeIdx].min * 60),
+          plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
           liveAdjSec: tasks[activeIdx].addedSec || 0,
+          scheduledSec: stepDurationSec,
           actualSec: Math.max(1, stepElapsedSec),
+          startedAt: stepStartMs,
+          endedAt: Date.now(),
           skipped: false
         });
         if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
@@ -1357,9 +1404,11 @@
       }
     }
     function startStep(idx) {
-      activeIdx = idx; stepStartMs = Date.now(); totalPausedMs = 0; paused = false; stepElapsedSec = 0;
+      const nowMs = Date.now();
+      if (idx === 0 && !routineStartedAt) routineStartedAt = nowMs;
+      activeIdx = idx; stepStartMs = nowMs; totalPausedMs = 0; paused = false; stepElapsedSec = 0;
       warned50 = false; warned20 = false; warnedZero = false; lastOvertimeWarnMin = 0;
-      let cInfo = (document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
+      let cInfo = (!forceOriginalRun && document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
         ? compressToDeadline(false, idx) : { compressed:false, lateMin:0 };
       stepDurationSec = getStepTargetSec(idx);
       enableKeepAlive(); saveSession(); playBeep(700,0.1,1);
@@ -1382,9 +1431,12 @@
       stopActiveRecognition(false);
       routineStats.push({
         title: tasks[activeIdx].title,
-        plannedSec: Math.round(tasks[activeIdx].min * 60),
+        plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
         liveAdjSec: tasks[activeIdx].addedSec || 0,
+        scheduledSec: stepDurationSec,
         actualSec: stepElapsedSec,
+        startedAt: stepStartMs,
+        endedAt: Date.now(),
         skipped: true
       });
       if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
@@ -1415,20 +1467,29 @@
       playBeep(880,0.15,3); vibrate([100,50,100]);
       disableKeepAlive();
 
-      let totalPlan = 0, totalAct = 0;
+      const endedAt = Date.now();
+      const startedAt = routineStartedAt || (routineStats.find(s => s.startedAt)?.startedAt) || endedAt;
+      let totalOriginalPlan = 0, totalPlan = 0, totalAct = 0, totalLiveAdj = 0;
       routineStats.forEach(s => {
-        totalPlan += (s.plannedSec + (s.liveAdjSec || 0));
+        totalOriginalPlan += (s.plannedSec || 0);
+        totalLiveAdj += (s.liveAdjSec || 0);
+        totalPlan += (Number.isFinite(s.scheduledSec) ? s.scheduledSec : (s.plannedSec + (s.liveAdjSec || 0)));
         if (!s.skipped) totalAct += s.actualSec;
       });
 
       clearSession();
       journal.push({
-        date: Date.now(),
+        date: endedAt,
+        startedAt,
+        endedAt,
         templateId: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].id : null,
         templateName: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].name : 'Шаблон',
         totalPlan,
+        totalOriginalPlan,
+        totalLiveAdj,
         totalActual: totalAct,
-        stats: routineStats
+        wasCompressed: (totalPlan - totalLiveAdj) < totalOriginalPlan - 1,
+        stats: routineStats.map(s => ({...s}))
       });
       if (journal.length > 100) journal = journal.slice(-100);
       try {
@@ -1445,10 +1506,34 @@
     }
     function resetRoutine() {
       activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0; editingTaskIdx = -1;
+      routineStartedAt = 0; forceOriginalRun = false;
       stopActiveRecognition(false);
       tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
       document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
       disableKeepAlive(); clearSession(); render();
+    }
+
+
+    function startOriginalTemplateFromSummary() {
+      const source = customTemplates[activeTemplateIdx];
+      if (!source || !Array.isArray(source.tasks) || !source.tasks.length) {
+        showToast('⚠️ Исходный шаблон не найден');
+        return;
+      }
+      if (activeIdx >= 0 && activeIdx < tasks.length && !confirm('Прервать текущий круг и запустить исходный шаблон?')) return;
+      tasks = JSON.parse(JSON.stringify(source.tasks)).map(t => {
+        const min = Math.max(0.5, Number(t.min) || Number(t.originalMin) || 5);
+        return { title: String(t.title || 'Без названия'), min, originalMin: min, compressedSec: null, addedSec: 0 };
+      });
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false;
+      routineStats = []; routineStartedAt = 0; forceOriginalRun = false;
+      lastOvertimeWarnMin = 0; warned50 = false; warned20 = false; warnedZero = false;
+      clearSession();
+      forceOriginalRun = true;
+      document.getElementById('summaryCard').classList.add('hidden');
+      saveSession();
+      startStep(0);
+      showToast(`▶ Запущен исходный шаблон «${source.name}» без автоужатия`);
     }
 
     function renderSummaryCard(stats) {
@@ -1460,40 +1545,51 @@
       if (!stats || !stats.length) return;
       card.classList.remove('hidden');
 
-      let tPlan = 0, tAct = 0;
+      let originalTotal = 0, scheduledTotal = 0, actualTotal = 0;
+      let hasCompression = false;
       pendingSuggestions = [];
 
       listEl.innerHTML = stats.map((s, i) => {
-        const effectivePlan = s.plannedSec + (s.liveAdjSec || 0);
-        tPlan += effectivePlan;
-        if (!s.skipped) tAct += s.actualSec;
-        const diff = s.actualSec - effectivePlan;
-        const liveNote = s.liveAdjSec ? ` <span class="text-amber-300">(live ${fmtSec(-s.liveAdjSec)})</span>` : '';
-        let b = s.skipped
-          ? `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Пропуск</span>`
-          : (diff <= 0
-              ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300">-${fmtSec(Math.abs(diff))}</span>`
-              : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300">+${fmtSec(diff)}</span>`);
+        const originalPlan = (s.plannedSec || 0);
+        const scheduledPlan = Number.isFinite(s.scheduledSec) ? s.scheduledSec : originalPlan;
+        const actual = s.skipped ? 0 : (s.actualSec || 0);
+        originalTotal += originalPlan;
+        scheduledTotal += scheduledPlan;
+        actualTotal += actual;
+        if (scheduledPlan - (s.liveAdjSec || 0) < originalPlan - 1) hasCompression = true;
+        const scheduledDiff = actual - scheduledPlan;
+        const originalDiff = actual - originalPlan;
+        const status = s.skipped
+          ? '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Пропуск</span>'
+          : (scheduledDiff <= 0
+              ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300">${fmtSignedDiff(scheduledDiff)}</span>`
+              : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300">${fmtSignedDiff(scheduledDiff)}</span>`);
+        const liveNote = s.liveAdjSec ? `<div class="text-emerald-300 text-[10px]">Добавлено вручную: +${fmtSec(s.liveAdjSec)}</div>` : '';
+        const compressionNote = scheduledPlan - (s.liveAdjSec || 0) < originalPlan - 1
+          ? `<div class="text-amber-300 text-[10px]">Сжато: ${fmtSec(originalPlan)} → ${fmtSec(Math.max(0, scheduledPlan - (s.liveAdjSec || 0)))} ⚡</div>`
+          : ''; 
 
-        let suggestedMin = Math.max(0.5, Math.round((s.plannedSec / 60) * 2) / 2);
+        let suggestedMin = Math.max(0.5, Math.round(((s.plannedSec || 0) / 60) * 2) / 2);
         if (!s.skipped) {
-          const rawTargetMin = Math.max(0.5, Math.round((s.actualSec / 60) * 2) / 2);
-          const deltaMin = +(rawTargetMin - suggestedMin).toFixed(1);
-          if (Math.abs(deltaMin) >= 0.5) suggestedMin = rawTargetMin;
+          const rawTargetMin = Math.max(0.5, Math.round((actual / 60) * 2) / 2);
+          if (Math.abs(rawTargetMin - suggestedMin) >= 0.5) suggestedMin = rawTargetMin;
         }
         pendingSuggestions.push({
-          idx: i,
-          title: s.title,
-          suggestedMin,
-          enabled: Math.abs(suggestedMin - Math.round((s.plannedSec / 60) * 2) / 2) >= 0.5
+          idx: i, title: s.title, suggestedMin,
+          enabled: Math.abs(suggestedMin - Math.round(((s.plannedSec || 0) / 60) * 2) / 2) >= 0.5
         });
 
-        return `<div class="flex justify-between items-center bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
-          <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}${liveNote}</span>
-          <div class="flex gap-2 text-xs items-center flex-shrink-0">
-            <span>План: ${fmtSec(effectivePlan)}</span>
-            <span class="text-white">Факт: ${s.skipped?'-':fmtSec(s.actualSec)}</span>
-            ${b}
+        return `<div class="bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
+          <div class="flex justify-between items-center gap-2">
+            <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}</span>
+            <span class="text-white text-xs flex-shrink-0">Факт: ${s.skipped ? '—' : fmtSec(actual)}</span>
+          </div>
+          ${compressionNote}${liveNote}
+          <div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 mt-1">
+            <span>Исходный: ${fmtSec(originalPlan)}</span>
+            <span>План прохода: ${fmtSec(scheduledPlan)}</span>
+            <span>Отклонение: ${s.skipped ? 'пропуск' : fmtSignedDiff(scheduledDiff)}</span>
+            <span>От исходного: ${s.skipped ? '—' : fmtSignedDiff(originalDiff)}</span>
           </div>
         </div>`;
       }).join('');
@@ -1512,15 +1608,21 @@
         </label>
       `).join('');
 
-      const tDiff = tAct - tPlan;
-      if (tDiff <= 0) {
-        badgeEl.textContent = `Быстрее на ${fmtSec(Math.abs(tDiff))}`;
-        badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600/50 tabular-nums';
-      } else {
-        badgeEl.textContent = `Дольше на +${fmtSec(tDiff)}`;
-        badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-600/50 tabular-nums';
-      }
-      totalsEl.innerHTML = `<span>Итого:</span><span>План ${fmtSec(tPlan)} / Факт <strong class="text-sky-400">${fmtSec(tAct)}</strong></span>`;
+      const scheduledDiff = actualTotal - scheduledTotal;
+      const originalDiff = actualTotal - originalTotal;
+      badgeEl.textContent = hasCompression ? 'По сжатому плану ⚡' : 'По исходному плану';
+      badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-900 text-amber-300 border border-slate-600 tabular-nums';
+      totalsEl.innerHTML = `<div class="w-full space-y-1">
+        <div class="flex justify-between gap-2"><span>План прохода / факт:</span><strong class="text-sky-300">${fmtSec(scheduledTotal)} / ${fmtSec(actualTotal)}</strong></div>
+        <div class="flex justify-between gap-2"><span>Отклонение от плана прохода:</span><strong>${fmtSignedDiff(scheduledDiff)}</strong></div>
+        <div class="flex justify-between gap-2"><span>Исходный план / отклонение:</span><strong>${fmtSec(originalTotal)} / ${fmtSignedDiff(originalDiff)}</strong></div>
+        ${hasCompression ? '<div class="text-amber-300 text-[11px]">⚡ В этом круге применялось автоужатие. Сравнение с исходным планом показано отдельно.</div>' : ''}
+      </div>`;
+    }
+
+    function fmtSignedDiff(diff) {
+      const rounded = Math.round(diff || 0);
+      return rounded > 0 ? `+${fmtSec(rounded)}` : rounded < 0 ? `−${fmtSec(Math.abs(rounded))}` : '00:00';
     }
 
     function toggleSuggestion(idx, checked) {
@@ -1565,6 +1667,7 @@
       }
 
       localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
       tasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
       tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
       constructorEditIdx = activeTemplateIdx;
@@ -1690,35 +1793,81 @@
     }
 
     function renderJournal() {
-      const days = document.getElementById('journalFilter').value;
+      const filterEl = document.getElementById('journalFilter');
+      const days = filterEl ? filterEl.value : '7';
       const chart = document.getElementById('chartContainer');
       const tips = document.getElementById('tipsContainer');
-      if (!chart || !tips) return;
+      const list = document.getElementById('journalList');
+      if (!chart || !tips || !list) return;
 
       let cutoff = 0;
       if (days !== 'all') cutoff = Date.now() - (parseInt(days, 10) * 24 * 60 * 60 * 1000);
-      const filtered = journal.filter(j => j.date >= cutoff);
+      const filtered = journal.filter(j => Number(j.date || j.endedAt || 0) >= cutoff)
+        .slice().sort((a,b) => (a.date || a.endedAt || 0) - (b.date || b.endedAt || 0));
 
       if (filtered.length === 0) {
         chart.innerHTML = '<div class="text-xs text-slate-500 w-full text-center pb-4">Нет данных за этот период</div>';
-        tips.innerHTML = 'Соберите статистику завершённых дней, чтобы получить советы.';
+        list.innerHTML = '<div class="text-xs text-slate-500 text-center py-2">Завершённые круги появятся здесь</div>';
+        tips.innerHTML = 'Соберите статистику завершённых кругов, чтобы получить советы.';
         return;
       }
 
       const toShow = filtered.slice(-15);
       chart.innerHTML = toShow.map(j => {
-        const pct = Math.min(100, Math.max(10, (j.totalActual / Math.max(1, j.totalPlan)) * 50));
-        const color = j.totalActual > j.totalPlan ? 'bg-rose-500' : 'bg-emerald-500';
-        return `<div class="w-full mx-0.5 rounded-t-sm chart-bar ${color}" style="height:${pct}%" title="${esc(new Date(j.date).toLocaleDateString())}"></div>`;
+        const planned = Number(j.totalPlan || j.totalOriginalPlan || 0);
+        const actual = Number(j.totalActual || 0);
+        const pct = Math.min(100, Math.max(10, (actual / Math.max(1, planned)) * 50));
+        const color = actual > planned ? 'bg-rose-500' : 'bg-emerald-500';
+        const stamp = j.endedAt || j.date;
+        return `<div class="w-full mx-0.5 rounded-t-sm chart-bar ${color}" style="height:${pct}%" title="${esc(new Date(stamp).toLocaleString())}"></div>`;
+      }).join('');
+
+      list.innerHTML = filtered.slice().reverse().map((j, idx) => {
+        const ended = Number(j.endedAt || j.date || 0);
+        const started = Number(j.startedAt || 0);
+        const dateText = ended ? new Date(ended).toLocaleDateString('ru-RU', {day:'2-digit', month:'long', year:'numeric'}) : 'Дата неизвестна';
+        const timeText = started && ended
+          ? `${new Date(started).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})} — ${new Date(ended).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}`
+          : `Время начала не сохранено — ${ended ? new Date(ended).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—'}`;
+        const plan = Number(j.totalPlan || j.totalOriginalPlan || 0);
+        const originalPlan = Number(j.totalOriginalPlan ?? plan);
+        const actual = Number(j.totalActual || 0);
+        const diff = actual - plan;
+        const originalDiff = actual - originalPlan;
+        const compressed = !!j.wasCompressed || (plan - (Number(j.totalLiveAdj) || 0)) < originalPlan - 1;
+        const stepRows = (j.stats || []).map((st, i) => {
+          const op = (Number(st.plannedSec) || 0);
+          const sp = Number.isFinite(st.scheduledSec) ? st.scheduledSec : op;
+          const compressedStep = (sp - (Number(st.liveAdjSec) || 0)) < op - 1;
+          const act = st.skipped ? 0 : (Number(st.actualSec) || 0);
+          return `<div class="flex flex-col gap-0.5 border-t border-slate-800 py-1.5 text-[11px]">
+            <div class="flex justify-between gap-2"><span class="text-slate-200">${i+1}. ${esc(st.title || 'Шаг')}</span><span>${st.skipped ? 'Пропуск' : fmtSec(act)}</span></div>
+            <div class="text-slate-500">Исходный ${fmtSec(op)} · План прохода ${fmtSec(sp)}${compressedStep ? ' ⚡' : ''} · ${st.skipped ? 'пропуск' : 'отклонение '+fmtSignedDiff(act-sp)}</div>
+          </div>`;
+        }).join('');
+        return `<details class="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-2">
+          <summary class="cursor-pointer list-none">
+            <div class="flex justify-between items-start gap-2"><strong class="text-sm text-white">${esc(j.templateName || 'Утренний шаблон')}</strong><span class="text-[10px] text-slate-400">${dateText}</span></div>
+            <div class="text-[11px] text-slate-400 mt-1">${timeText}</div>
+            <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] mt-2">
+              <span>План: ${fmtSec(plan)}</span><span>Факт: ${fmtSec(actual)}</span>
+              <strong class="${diff > 0 ? 'text-rose-300' : 'text-emerald-300'}">${fmtSignedDiff(diff)}</strong>
+              ${compressed ? '<span class="text-amber-300">⚡ Сжатый план</span>' : '<span class="text-slate-400">Исходный план</span>'}
+            </div>
+            ${compressed ? `<div class="text-[10px] text-amber-300 mt-1">Исходно ${fmtSec(originalPlan)} · отклонение от исходного ${fmtSignedDiff(originalDiff)}</div>` : ''}
+            <div class="text-[10px] text-sky-300 mt-1">Нажмите, чтобы раскрыть шаги</div>
+          </summary>
+          <div class="mt-2">${stepRows || '<div class="text-xs text-slate-500">Нет подробной статистики</div>'}</div>
+        </details>`;
       }).join('');
 
       const taskFails = {};
       filtered.forEach(j => {
-        (j.stats || []).forEach(s => {
-          if (s.skipped) return;
-          const plan = s.plannedSec + (s.liveAdjSec || 0);
-          const over = s.actualSec - plan;
-          if (over > 0) taskFails[s.title] = (taskFails[s.title] || []).concat(over);
+        (j.stats || []).forEach(st => {
+          if (st.skipped) return;
+          const plan = Number.isFinite(st.scheduledSec) ? st.scheduledSec : (st.plannedSec || 0);
+          const over = (st.actualSec || 0) - plan;
+          if (over > 0) taskFails[st.title] = (taskFails[st.title] || []).concat(over);
         });
       });
       let worstTask = null, maxAvg = 0;
@@ -1727,9 +1876,9 @@
         if (avg > maxAvg) { maxAvg = avg; worstTask = t; }
       }
       if (worstTask && maxAvg > 60) {
-        tips.innerHTML = `💡 Чаще всего вы теряете время на шаге <b>«${esc(worstTask)}»</b> (в среднем перерасход +${Math.round(maxAvg/60)} мин). Примените совет в сводке или увеличьте план в конструкторе.`;
+        tips.innerHTML = `💡 Чаще всего перерасход на шаге <b>«${esc(worstTask)}»</b> (в среднем +${Math.round(maxAvg/60)} мин относительно назначенного времени).`;
       } else {
-        tips.innerHTML = '🔥 Вы отлично справляетесь! Критических просадок по времени не обнаружено.';
+        tips.innerHTML = '🔥 Критических перерасходов относительно назначенного плана не обнаружено.';
       }
     }
 
@@ -1785,18 +1934,22 @@
       reader.onload = ev => {
         try {
           const data = JSON.parse(ev.target.result);
-          const okTemplates = Array.isArray(data.templates) && data.templates.every(t =>
-            t && typeof t.name === 'string' && Array.isArray(t.tasks) &&
-            t.tasks.every(x => x && typeof x.title === 'string' && typeof x.min === 'number'));
+          const okTemplates = Array.isArray(data.templates) && data.templates.length > 0 && data.templates.every(t =>
+            t && typeof t.name === 'string' && t.name.trim().length > 0 && Array.isArray(t.tasks) && t.tasks.length > 0 &&
+            t.tasks.every(x => x && typeof x.title === 'string' && x.title.trim().length > 0 &&
+              Number.isFinite(Number(x.min)) && Number(x.min) >= 0.5 && Number(x.min) <= 1440));
           const okJournal = data.journal === undefined || (Array.isArray(data.journal) &&
-            data.journal.every(j => j && typeof j.date === 'number'));
+            data.journal.every(j => j && Number.isFinite(Number(j.date || j.endedAt)) &&
+              (j.stats === undefined || Array.isArray(j.stats))));
           if (!okTemplates || !okJournal) {
             alert('Файл не похож на резервную копию — импорт отменён.');
             return;
           }
           const backup = {
             templates: safeJsonParse(localStorage.getItem('m_custom_templates'), []),
-            journal: safeJsonParse(localStorage.getItem('m_journal'), [])
+            journal: safeJsonParse(localStorage.getItem('m_journal'), []),
+            session: safeJsonParse(localStorage.getItem('m_active_session'), null),
+            activeTemplateIdx: safeJsonParse(localStorage.getItem('m_active_tpl_idx'), 0)
           };
           localStorage.setItem('m_backup_before_import', JSON.stringify(backup));
           localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
@@ -1812,18 +1965,47 @@
     function addTask() {
       const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
       if(!t) return;
-      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:m, originalMin:m, compressedSec:null, addedSec:0 });
+      const safeMin = Math.max(0.5, Number.isFinite(m) ? m : 5);
+      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:safeMin, originalMin:safeMin, compressedSec:null, addedSec:0 });
       document.getElementById('newTaskTitle').value=''; saveTasks(); render();
     }
     function removeTask(i, fromVoice = false) {
       if (!tasks[i]) return;
-      if (!fromVoice && i === activeIdx && !confirm('Удалить текущий активный шаг? Прогресс шага будет сброшен.')) return;
-      const removedTitle = tasks[i].title;
+      const removingActive = i === activeIdx;
+      const wasLastActive = removingActive && i === tasks.length - 1;
+      if (!fromVoice && removingActive && !confirm('Удалить текущий активный шаг? Его прогресс будет сброшен, следующий шаг начнётся заново.')) return;
+      const removed = tasks[i];
+      const removedTitle = removed.title;
       pushUndo('Удаление пункта');
+      if (wasLastActive) {
+        routineStats.push({
+          title: removed.title,
+          plannedSec: Math.round((removed.originalMin ?? removed.min) * 60),
+          liveAdjSec: removed.addedSec || 0,
+          scheduledSec: stepDurationSec,
+          actualSec: stepElapsedSec,
+          startedAt: stepStartMs,
+          endedAt: Date.now(),
+          skipped: true
+        });
+      }
       if (editingTaskIdx === i) editingTaskIdx = -1;
       else if (editingTaskIdx > i) editingTaskIdx--;
-      if (activeIdx >= 0) { if(i < activeIdx) activeIdx--; else if(i === activeIdx && activeIdx >= tasks.length-1) activeIdx = -1; }
-      tasks.splice(i, 1); saveTasks(); render();
+      tasks.splice(i, 1);
+      if (activeIdx >= 0) {
+        if (i < activeIdx) activeIdx--;
+        else if (removingActive) activeIdx = tasks.length ? Math.min(i, tasks.length - 1) : -1;
+      }
+      if (removingActive && wasLastActive) {
+        finishRoutine();
+      } else if (removingActive && activeIdx >= 0) {
+        startStep(activeIdx);
+      } else if (removingActive) {
+        stepDurationSec = 0; stepElapsedSec = 0; routineStartedAt = 0;
+        clearSession();
+      }
+      if (!wasLastActive) { saveTasks(); saveSession(); }
+      render();
       showUndoToast(`🗑 Удалено: «${removedTitle}»`);
     }
     function startEditTask(i) {
@@ -2010,7 +2192,7 @@
         if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
 
         const bBadge = document.getElementById('keepAliveBadge');
-        bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран и аудио защищены</span>' : '<span>🔓 Ожидание старта</span>';
+        bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран удерживается (пока разрешено)</span>' : '<span>🔓 Фоновая защита браузера ограничена</span>';
         bBadge.className = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300' : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-700 text-slate-400';
 
         const tDisp = document.getElementById('timerDisplay'), pBar = document.getElementById('stepProgressBar'), mBtn = document.getElementById('mainBtn'), pBtn = document.getElementById('pauseBtn');
