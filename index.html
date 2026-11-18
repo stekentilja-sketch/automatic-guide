@@ -523,6 +523,9 @@
       unitTargetSec: 0, unitStats: []
     };
 
+    factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 }, factState);
+    let factWarned20 = false, factWarnedZero = false;
+
     // --- ПЕРЕХВАТ НАУШНИКОВ ---
     function setupMediaSessionHandlers() {
       if ('navigator' in window && 'mediaSession' in navigator) {
@@ -540,10 +543,10 @@
             }
           });
           navigator.mediaSession.setActionHandler('play', () => {
-            if (paused) togglePause();
+            if (currentMode === 'factory' ? factState.active && factState.paused : paused) togglePause();
           });
           navigator.mediaSession.setActionHandler('pause', () => {
-            if (!paused) togglePause();
+            if (currentMode === 'factory' ? factState.active && !factState.paused : !paused) togglePause();
           });
         } catch(e) {}
       }
@@ -835,42 +838,73 @@
     function compressToDeadline(isManual=false, targetStartIdx=null) {
       const useDl = document.getElementById('useDeadline').checked;
       if (!useDl && !isManual) return { compressed:false, lateMin:0 };
-      const now = new Date(), dlDate = getDeadlineDate(now);
-      const availSec = Math.floor((dlDate-now)/1000);
-      const startIdx = targetStartIdx !== null ? targetStartIdx : (activeIdx>=0 ? activeIdx : 0);
-      const remCount = tasks.length - startIdx;
-      if (remCount <= 0) return { compressed:false, lateMin:0 };
+      const now = new Date(), deadline = getDeadlineDate(now);
+      const availableSec = Math.floor((deadline - now) / 1000);
+      const startIdx = targetStartIdx !== null ? targetStartIdx : (activeIdx >= 0 ? activeIdx : 0);
+      if (startIdx >= tasks.length) return { compressed:false, lateMin:0 };
 
-      let currentUncompressedRemSec = 0;
-      for (let i=startIdx;i<tasks.length;i++) {
-        if (i===activeIdx && targetStartIdx===null) currentUncompressedRemSec += Math.max(30, stepDurationSec - stepElapsedSec);
-        else currentUncompressedRemSec += Math.round((tasks[i].originalMin ?? tasks[i].min) * 60) + (tasks[i].addedSec || 0);
+      const entries = [];
+      for (let i=startIdx; i<tasks.length; i++) {
+        const isCurrent = i === activeIdx && targetStartIdx === null;
+        const remaining = isCurrent
+          ? Math.max(0, stepDurationSec - stepElapsedSec)
+          : getStepTargetSec(i);
+        const locked = !!tasks[i].locked;
+        entries.push({ i, isCurrent, locked, baseSec: Math.max(0, remaining) });
       }
-      const lateSec = currentUncompressedRemSec - availSec;
-      const lateMin = Math.max(1, Math.round(lateSec/60));
+      const totalBefore = entries.reduce((sum, x) => sum + x.baseSec, 0);
+      const lateSec = totalBefore - availableSec;
+      const lateMin = Math.max(1, Math.ceil(lateSec / 60));
       if (lateSec <= 0) {
-        if (isManual) showToast('✅ Вы уже укладываетесь в дедлайн!');
+        if (isManual) showToast('✅ План уже укладывается в дедлайн');
         return { compressed:false, lateMin:0 };
       }
-      if (isManual) pushUndo('Сжатие');
-      const minimumChainSec = remCount * 30;
-      const usableSec = Math.max(0, availSec);
-      const ratio = Math.min(1, Math.max(minimumChainSec, usableSec) / Math.max(1, currentUncompressedRemSec));
-      for (let i=startIdx;i<tasks.length;i++) {
-        if (tasks[i].originalMin == null) tasks[i].originalMin = tasks[i].min;
-        const baseSec = (i===activeIdx && targetStartIdx===null)
-          ? Math.max(30, stepDurationSec - stepElapsedSec)
-          : Math.round((tasks[i].originalMin ?? tasks[i].min) * 60);
-        tasks[i].compressedSec = Math.max(30, Math.round(baseSec*ratio));
-        if (i===activeIdx && targetStartIdx===null) stepDurationSec = getStepTargetSec(i);
+
+      const lockedSec = entries.filter(x => x.locked).reduce((sum, x) => sum + x.baseSec, 0);
+      const flexible = entries.filter(x => !x.locked);
+      const minimumFlexibleSec = flexible.length * 30;
+      const flexibleBudget = availableSec - lockedSec;
+      if (availableSec <= 0 || flexibleBudget < minimumFlexibleSec) {
+        const message = availableSec <= 0
+          ? 'Дедлайн уже наступил — сжать план в оставшееся время невозможно.'
+          : `Невозможно уложиться: обязательные и минимальные интервалы требуют ещё ${Math.ceil((lockedSec + minimumFlexibleSec - Math.max(0, availableSec))/60)} мин.`;
+        showToast('⚠️ ' + message);
+        return { compressed:false, impossible:true, lateMin };
+      }
+      if (!flexible.length) {
+        showToast('⚠️ Все оставшиеся задачи защищены от сжатия');
+        return { compressed:false, impossible:true, lateMin };
+      }
+
+      if (isManual) pushUndo('Сжатие под дедлайн');
+      const flexibleTotal = flexible.reduce((sum, x) => sum + x.baseSec, 0);
+      const ratio = Math.min(1, Math.max(0, (flexibleBudget - minimumFlexibleSec) / Math.max(1, flexibleTotal - minimumFlexibleSec)));
+      for (const item of flexible) {
+        const task = tasks[item.i];
+        if (task.originalMin == null) task.originalMin = task.min;
+        const desiredRemaining = Math.max(30, Math.floor(item.baseSec - (item.baseSec - 30) * (1 - ratio)));
+        if (item.isCurrent) {
+          const newTotalTarget = stepElapsedSec + desiredRemaining;
+          task.compressedSec = Math.max(30, newTotalTarget - (task.addedSec || 0));
+          stepDurationSec = getStepTargetSec(item.i);
+        } else {
+          task.compressedSec = Math.max(30, desiredRemaining - (task.addedSec || 0));
+        }
       }
       saveSession(); render();
       if (isManual) {
         playBeep(680,0.1,2);
-        speakRu(`Сжато под дедлайн. Отставание было ${lateMin} минут.`);
-        showUndoToast(`⚡ Сжато под дедлайн (отставание ${lateMin} мин)`);
+        speakRu(`План сокращён. Исходное отставание ${lateMin} минут. Защищённые задачи не изменены.`);
+        showUndoToast(`⚡ Сжатие применено; защищённые задачи сохранены`);
       }
       return { compressed:true, lateMin };
+    }
+
+    function toggleLock(idx) {
+      if (idx < 0 || idx >= tasks.length) return;
+      tasks[idx].locked = !tasks[idx].locked;
+      saveTasks(); saveSession(); render();
+      showToast(tasks[idx].locked ? `🔒 «${tasks[idx].title}» защищено от сжатия` : `🔓 «${tasks[idx].title}» снова можно сокращать`);
     }
 
     // ============ НАДЁЖНЫЙ ПАРСЕР ЧИСЕЛ И ГОЛОСОВЫХ КОМАНД ============
@@ -1997,6 +2031,585 @@
       }
     }
 
+
+    // --- ВОССТАНОВЛЕННЫЕ ФУНКЦИИ УТРЕННЕГО РЕЖИМА ---
+// Восстановлено из стабильной версии: addConstructorTask
+function addConstructorTask() {
+      const titleInput = document.getElementById('constructorNewTaskTitle');
+      const minInput = document.getElementById('constructorNewTaskMin');
+      const title = titleInput.value.trim();
+      const min = parseFloat(minInput.value) || 5;
+      if (!title) return;
+      constructorDraftTasks.push({ title: title.charAt(0).toUpperCase() + title.slice(1), min });
+      titleInput.value = '';
+      renderConstructor();
+    }
+
+// Восстановлено из стабильной версии: addSavedMinute
+function addSavedMinute() {
+      if (activeIdx >= 0 && activeIdx < tasks.length) {
+        if (savedSec >= 60) {
+          savedSec -= 60;
+          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
+          showToast('⏱ +1 минута из запаса');
+        } else {
+          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
+          showToast('⏱ +1 минута к текущему');
+        }
+        stepDurationSec = getStepTargetSec(activeIdx);
+        saveSession(); render();
+      }
+    }
+
+// Восстановлено из стабильной версии: applySummaryToTemplate
+function applySummaryToTemplate(asNewVersion) {
+      if (!pendingSuggestions.length) return;
+      const sourceTpl = customTemplates[activeTemplateIdx] || customTemplates[0];
+      const updatedTasks = sourceTpl.tasks.map((t, i) => {
+        const sug = pendingSuggestions[i];
+        const nextMin = (sug && sug.enabled) ? sug.suggestedMin : t.min;
+        return { title: t.title, min: nextMin, originalMin: nextMin, compressedSec: null, addedSec: 0 };
+      });
+
+      if (asNewVersion) {
+        const newName = getNextVersionName(sourceTpl.name);
+        customTemplates.push({ id: Date.now(), name: newName, tasks: updatedTasks });
+        activeTemplateIdx = customTemplates.length - 1;
+        showToast(`🆕 Создан шаблон «${newName}»`);
+      } else {
+        sourceTpl.tasks = updatedTasks;
+        showToast(`💾 Шаблон «${sourceTpl.name}» обновлён`);
+      }
+
+      localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
+      localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
+      tasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
+      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      constructorEditIdx = activeTemplateIdx;
+      constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
+      renderTemplates();
+      renderConstructor();
+      render();
+    }
+
+// Восстановлено из стабильной версии: confirmReset
+function confirmReset() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) { resetRoutine(); return; }
+      if (confirm('Сбросить прогресс?')) resetRoutine();
+    }
+
+// Восстановлено из стабильной версии: finishRoutine
+function finishRoutine() {
+      activeIdx = tasks.length; document.body.className = 'pb-16';
+      stopActiveRecognition(false);
+      playBeep(880,0.15,3); vibrate([100,50,100]);
+      disableKeepAlive();
+
+      const endedAt = Date.now();
+      const startedAt = routineStartedAt || (routineStats.find(s => s.startedAt)?.startedAt) || endedAt;
+      let totalOriginalPlan = 0, totalPlan = 0, totalAct = 0, totalLiveAdj = 0;
+      routineStats.forEach(s => {
+        totalOriginalPlan += (s.plannedSec || 0);
+        totalLiveAdj += (s.liveAdjSec || 0);
+        totalPlan += (Number.isFinite(s.scheduledSec) ? s.scheduledSec : (s.plannedSec + (s.liveAdjSec || 0)));
+        if (!s.skipped) totalAct += s.actualSec;
+      });
+
+      clearSession();
+      journal.push({
+        date: endedAt,
+        startedAt,
+        endedAt,
+        templateId: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].id : null,
+        templateName: customTemplates[activeTemplateIdx] ? customTemplates[activeTemplateIdx].name : 'Шаблон',
+        totalPlan,
+        totalOriginalPlan,
+        totalLiveAdj,
+        totalActual: totalAct,
+        wasCompressed: (totalPlan - totalLiveAdj) < totalOriginalPlan - 1,
+        stats: routineStats.map(s => ({...s}))
+      });
+      if (journal.length > 100) journal = journal.slice(-100);
+      try {
+        localStorage.setItem('m_journal', JSON.stringify(journal));
+      } catch (e) {
+        showToast('⚠️ Журнал не сохранился: память переполнена');
+      }
+
+      renderSummaryCard(routineStats);
+      renderJournal();
+      render();
+      notify('Утренний Темп-Будильник', 'Отличная работа! Все ритуалы завершены 🎉');
+      speakRu('Отличная работа! Все ритуалы завершены.', () => openAutoVoiceWindow5Sec());
+    }
+
+// Восстановлено из стабильной версии: fmtSignedDiff
+function fmtSignedDiff(diff) {
+      const rounded = Math.round(diff || 0);
+      return rounded > 0 ? `+${fmtSec(rounded)}` : rounded < 0 ? `−${fmtSec(Math.abs(rounded))}` : '00:00';
+    }
+
+// Восстановлено из стабильной версии: getNextVersionName
+function getNextVersionName(baseName) {
+      const cleanBase = baseName.replace(/\s*v\d+(?:\.\d+)?$/i, '').trim();
+      const regex = new RegExp(`^${cleanBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*v(\\d+)\\.0$`, 'i');
+      let maxVer = 1;
+      customTemplates.forEach(t => {
+        const m = t.name.match(regex);
+        if (m) maxVer = Math.max(maxVer, parseInt(m[1], 10));
+      });
+      return `${cleanBase} v${maxVer + 1}.0`;
+    }
+
+// Восстановлено из стабильной версии: handleMainBtn
+function handleMainBtn() {
+      vibrate(30);
+      stopActiveRecognition(false);
+      if (activeIdx === -1 || activeIdx >= tasks.length) {
+        if (tasks.length === 0) { showToast('⚠️ Добавьте задачи!'); return; }
+        savedSec = 0; routineStats = []; paused = false; lastOvertimeWarnMin = 0;
+        routineStartedAt = 0; forceOriginalRun = false;
+        tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; t.addedSec=0; });
+        document.getElementById('summaryCard').classList.add('hidden');
+        startStep(0);
+      } else {
+        const diff = stepDurationSec - stepElapsedSec;
+        if (diff > 0) savedSec += diff;
+        routineStats.push({
+          title: tasks[activeIdx].title,
+          plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
+          liveAdjSec: tasks[activeIdx].addedSec || 0,
+          scheduledSec: stepDurationSec,
+          actualSec: Math.max(1, stepElapsedSec),
+          startedAt: stepStartMs,
+          endedAt: Date.now(),
+          skipped: false
+        });
+        if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
+        else finishRoutine();
+      }
+    }
+
+// Восстановлено из стабильной версии: openTemplateConstructor
+function openTemplateConstructor(idx) {
+      if (idx >= 0 && customTemplates[idx]) {
+        constructorEditIdx = idx;
+        document.getElementById('constructorModeLabel').textContent = `Редактирование: ${customTemplates[idx].name}`;
+        document.getElementById('constructorNameInput').value = customTemplates[idx].name;
+        constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
+      } else {
+        constructorEditIdx = -1;
+        document.getElementById('constructorModeLabel').textContent = 'Новый шаблон';
+        document.getElementById('constructorNameInput').value = '';
+        constructorDraftTasks = [];
+      }
+      renderConstructor();
+    }
+
+// Восстановлено из стабильной версии: renderConstructor
+function renderConstructor() {
+      const list = document.getElementById('constructorTasksList');
+      const totalEl = document.getElementById('constructorTotalMin');
+      if (!list || !totalEl) return;
+      const totalMin = constructorDraftTasks.reduce((a, t) => a + (Number(t.min) || 0), 0);
+      totalEl.textContent = `Итого: ${totalMin} мин`;
+
+      if (!constructorDraftTasks.length) {
+        list.innerHTML = `<div class="text-[11px] text-slate-500 text-center py-2">Список пуст — надиктуйте микрофоном или добавьте ниже</div>`;
+        return;
+      }
+
+      list.innerHTML = constructorDraftTasks.map((t, i) => `
+        <div class="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+          <span class="text-slate-500 font-bold w-4">${i+1}.</span>
+          <input type="text" value="${esc(t.title)}"
+            onchange="updateConstructorTask(${i}, 'title', this.value)"
+            class="flex-1 bg-transparent text-white focus:outline-none" />
+          <input type="number" value="${esc(t.min)}" min="0.5" step="0.5"
+            onchange="updateConstructorTask(${i}, 'min', this.value)"
+            class="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-sky-300 font-bold tabular-nums" />
+          <span class="text-slate-500 text-[10px]">мин</span>
+          <button type="button" onclick="moveConstructorTask(${i}, -1)" class="px-1.5 text-slate-400 hover:text-white">↑</button>
+          <button type="button" onclick="moveConstructorTask(${i}, 1)" class="px-1.5 text-slate-400 hover:text-white">↓</button>
+          <button type="button" onclick="removeConstructorTask(${i})" class="px-1.5 text-rose-400 font-bold">✕</button>
+        </div>
+      `).join('');
+    }
+
+// Восстановлено из стабильной версии: renderSummaryCard
+function renderSummaryCard(stats) {
+      const card = document.getElementById('summaryCard');
+      const listEl = document.getElementById('summaryList');
+      const badgeEl = document.getElementById('summaryTotalBadge');
+      const totalsEl = document.getElementById('summaryTotalsRow');
+      const sugEl = document.getElementById('summarySuggestions');
+      if (!stats || !stats.length) return;
+      card.classList.remove('hidden');
+
+      let originalTotal = 0, scheduledTotal = 0, actualTotal = 0;
+      let hasCompression = false;
+      pendingSuggestions = [];
+
+      listEl.innerHTML = stats.map((s, i) => {
+        const originalPlan = (s.plannedSec || 0);
+        const scheduledPlan = Number.isFinite(s.scheduledSec) ? s.scheduledSec : originalPlan;
+        const actual = s.skipped ? 0 : (s.actualSec || 0);
+        originalTotal += originalPlan;
+        scheduledTotal += scheduledPlan;
+        actualTotal += actual;
+        if (scheduledPlan - (s.liveAdjSec || 0) < originalPlan - 1) hasCompression = true;
+        const scheduledDiff = actual - scheduledPlan;
+        const originalDiff = actual - originalPlan;
+        const status = s.skipped
+          ? '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Пропуск</span>'
+          : (scheduledDiff <= 0
+              ? `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300">${fmtSignedDiff(scheduledDiff)}</span>`
+              : `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300">${fmtSignedDiff(scheduledDiff)}</span>`);
+        const liveNote = s.liveAdjSec ? `<div class="text-emerald-300 text-[10px]">Добавлено вручную: +${fmtSec(s.liveAdjSec)}</div>` : '';
+        const compressionNote = scheduledPlan - (s.liveAdjSec || 0) < originalPlan - 1
+          ? `<div class="text-amber-300 text-[10px]">Сжато: ${fmtSec(originalPlan)} → ${fmtSec(Math.max(0, scheduledPlan - (s.liveAdjSec || 0)))} ⚡</div>`
+          : ''; 
+
+        let suggestedMin = Math.max(0.5, Math.round(((s.plannedSec || 0) / 60) * 2) / 2);
+        if (!s.skipped) {
+          const rawTargetMin = Math.max(0.5, Math.round((actual / 60) * 2) / 2);
+          if (Math.abs(rawTargetMin - suggestedMin) >= 0.5) suggestedMin = rawTargetMin;
+        }
+        pendingSuggestions.push({
+          idx: i, title: s.title, suggestedMin,
+          enabled: Math.abs(suggestedMin - Math.round(((s.plannedSec || 0) / 60) * 2) / 2) >= 0.5
+        });
+
+        return `<div class="bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
+          <div class="flex justify-between items-center gap-2">
+            <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}</span>
+            <span class="text-white text-xs flex-shrink-0">Факт: ${s.skipped ? '—' : fmtSec(actual)}</span>
+          </div>
+          ${compressionNote}${liveNote}
+          <div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 mt-1">
+            <span>Исходный: ${fmtSec(originalPlan)}</span>
+            <span>План прохода: ${fmtSec(scheduledPlan)}</span>
+            <span>Отклонение: ${s.skipped ? 'пропуск' : fmtSignedDiff(scheduledDiff)}</span>
+            <span>От исходного: ${s.skipped ? '—' : fmtSignedDiff(originalDiff)}</span>
+          </div>
+        </div>`;
+      }).join('');
+
+      sugEl.innerHTML = pendingSuggestions.map((item, idx) => `
+        <label class="flex items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 px-2.5 py-1.5 rounded-lg cursor-pointer">
+          <span class="flex items-center gap-2 truncate">
+            <input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleSuggestion(${idx}, this.checked)" class="accent-emerald-400" />
+            <span class="truncate text-slate-200">${esc(item.title)}</span>
+          </span>
+          <span class="flex items-center gap-1 flex-shrink-0">
+            <button type="button" onclick="event.preventDefault();stepSuggestionMin(${idx}, -0.5)" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">−</button>
+            <span id="sugMin_${idx}" class="font-extrabold text-sky-300 tabular-nums px-1">${item.suggestedMin} мин</span>
+            <button type="button" onclick="event.preventDefault();stepSuggestionMin(${idx}, 0.5)" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">+</button>
+          </span>
+        </label>
+      `).join('');
+
+      const scheduledDiff = actualTotal - scheduledTotal;
+      const originalDiff = actualTotal - originalTotal;
+      badgeEl.textContent = hasCompression ? 'По сжатому плану ⚡' : 'По исходному плану';
+      badgeEl.className = 'text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-900 text-amber-300 border border-slate-600 tabular-nums';
+      totalsEl.innerHTML = `<div class="w-full space-y-1">
+        <div class="flex justify-between gap-2"><span>План прохода / факт:</span><strong class="text-sky-300">${fmtSec(scheduledTotal)} / ${fmtSec(actualTotal)}</strong></div>
+        <div class="flex justify-between gap-2"><span>Отклонение от плана прохода:</span><strong>${fmtSignedDiff(scheduledDiff)}</strong></div>
+        <div class="flex justify-between gap-2"><span>Исходный план / отклонение:</span><strong>${fmtSec(originalTotal)} / ${fmtSignedDiff(originalDiff)}</strong></div>
+        ${hasCompression ? '<div class="text-amber-300 text-[11px]">⚡ В этом круге применялось автоужатие. Сравнение с исходным планом показано отдельно.</div>' : ''}
+      </div>`;
+    }
+
+// Восстановлено из стабильной версии: resetRoutine
+function resetRoutine() {
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0; editingTaskIdx = -1;
+      routineStartedAt = 0; forceOriginalRun = false;
+      stopActiveRecognition(false);
+      tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
+      document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
+      disableKeepAlive(); clearSession(); render();
+    }
+
+// Восстановлено из стабильной версии: skipStep
+function skipStep() {
+      if (activeIdx === -1 || activeIdx >= tasks.length) return;
+      vibrate(30);
+      stopActiveRecognition(false);
+      routineStats.push({
+        title: tasks[activeIdx].title,
+        plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
+        liveAdjSec: tasks[activeIdx].addedSec || 0,
+        scheduledSec: stepDurationSec,
+        actualSec: stepElapsedSec,
+        startedAt: stepStartMs,
+        endedAt: Date.now(),
+        skipped: true
+      });
+      if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
+      else finishRoutine();
+    }
+
+// Восстановлено из стабильной версии: startOriginalTemplateFromSummary
+function startOriginalTemplateFromSummary() {
+      const source = customTemplates[activeTemplateIdx];
+      if (!source || !Array.isArray(source.tasks) || !source.tasks.length) {
+        showToast('⚠️ Исходный шаблон не найден');
+        return;
+      }
+      if (activeIdx >= 0 && activeIdx < tasks.length && !confirm('Прервать текущий круг и запустить исходный шаблон?')) return;
+      tasks = JSON.parse(JSON.stringify(source.tasks)).map(t => {
+        const min = Math.max(0.5, Number(t.min) || Number(t.originalMin) || 5);
+        return { title: String(t.title || 'Без названия'), min, originalMin: min, compressedSec: null, addedSec: 0 };
+      });
+      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false;
+      routineStats = []; routineStartedAt = 0; forceOriginalRun = false;
+      lastOvertimeWarnMin = 0; warned50 = false; warned20 = false; warnedZero = false;
+      clearSession();
+      forceOriginalRun = true;
+      document.getElementById('summaryCard').classList.add('hidden');
+      saveSession();
+      startStep(0);
+      showToast(`▶ Запущен исходный шаблон «${source.name}» без автоужатия`);
+    }
+
+// Восстановлено из стабильной версии: startStep
+function startStep(idx) {
+      const nowMs = Date.now();
+      if (idx === 0 && !routineStartedAt) routineStartedAt = nowMs;
+      activeIdx = idx; stepStartMs = nowMs; totalPausedMs = 0; paused = false; stepElapsedSec = 0;
+      warned50 = false; warned20 = false; warnedZero = false; lastOvertimeWarnMin = 0;
+      let cInfo = (!forceOriginalRun && document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
+        ? compressToDeadline(false, idx) : { compressed:false, lateMin:0 };
+      stepDurationSec = getStepTargetSec(idx);
+      enableKeepAlive(); saveSession(); playBeep(700,0.1,1);
+
+      let sp = `Дальше: ${tasks[idx].title}.`;
+      if (cInfo.compressed) sp += ` Сжато.`;
+      speakRu(sp);
+      render();
+    }
+
+// Восстановлено из стабильной версии: stepSuggestionMin
+function stepSuggestionMin(idx, delta) {
+      if (!pendingSuggestions[idx]) return;
+      pendingSuggestions[idx].suggestedMin = Math.max(0.5, +(pendingSuggestions[idx].suggestedMin + delta).toFixed(1));
+      pendingSuggestions[idx].enabled = true;
+      const el = document.getElementById(`sugMin_${idx}`);
+      if (el) el.textContent = `${pendingSuggestions[idx].suggestedMin} мин`;
+    }
+
+// Восстановлено из стабильной версии: togglePause
+function togglePause() {
+      if (currentMode === 'factory') {
+        if (!factState.active) return;
+        factState.paused = !factState.paused;
+        if (factState.paused) factState.pauseStartedAt = Date.now();
+        else {
+          factState.totalPausedMs = (factState.totalPausedMs || 0) + (Date.now() - (factState.pauseStartedAt || Date.now()));
+          factState.pauseStartedAt = 0;
+        }
+        try { localStorage.setItem('m_factory_session', JSON.stringify(factState)); } catch(e) {}
+        playBeep(factState.paused ? 420 : 720, 0.08, 1);
+        showToast(factState.paused ? '⏸ Цех: пауза' : '▶ Цех: продолжаем');
+        renderFactoryUI();
+        return;
+      }
+      if (activeIdx < 0 || activeIdx >= tasks.length) return;
+      paused = !paused;
+      if (paused) { pauseStartMs = Date.now(); speakRu('Пауза'); showToast('⏸ Пауза'); }
+      else { totalPausedMs += (Date.now() - pauseStartMs); speakRu('Продолжаем'); showToast('▶ Продолжаем'); }
+      saveSession(); render();
+    }
+
+// Восстановлено из стабильной версии: toggleSuggestion
+function toggleSuggestion(idx, checked) {
+      if (pendingSuggestions[idx]) pendingSuggestions[idx].enabled = checked;
+    }
+
+    // --- ЛОГИКА ЦЕХА: изолированное состояние, не затрагивает таймер утра ---
+    function setCalcMode(mode) {
+      calcMode = mode === 'perUnit' ? 'perUnit' : 'total';
+      document.getElementById('subTabTotal').classList.toggle('active', calcMode === 'total');
+      document.getElementById('subTabPerUnit').classList.toggle('active', calcMode === 'perUnit');
+      document.getElementById('factTimeLabel').textContent = calcMode === 'total' ? 'Общее время:' : 'Время на 1 шт:';
+      document.getElementById('factTimeUnit').textContent = 'мин';
+      updateFactCalc();
+    }
+
+    function updateFactCalc() {
+      const val = Number(document.getElementById('factTimeVal')?.value);
+      const units = Number(document.getElementById('factTotalUnits')?.value);
+      const out = document.getElementById('factCalcResult');
+      if (!out) return;
+      if (!Number.isFinite(val) || val <= 0 || !Number.isInteger(units) || units < 1) { out.textContent = ''; return; }
+      const perUnit = calcMode === 'total' ? val * 60 / units : val * 60;
+      const total = calcMode === 'total' ? val : val * units;
+      out.textContent = `Норма: ${fmtSec(Math.round(perUnit))} на 1 шт · Всего: ${total.toFixed(1)} мин`;
+    }
+
+    function persistFactory() {
+      try { localStorage.setItem('m_factory_session', JSON.stringify(factState)); }
+      catch(e) { showToast('⚠️ Не удалось сохранить партию: память браузера заполнена'); }
+    }
+
+    function startFactoryBatch() {
+      const name = document.getElementById('factOpName').value.trim();
+      const val = Number(document.getElementById('factTimeVal').value);
+      const units = Number(document.getElementById('factTotalUnits').value);
+      const autoNext = document.getElementById('factAutoNext').checked;
+      if (!name || !Number.isFinite(val) || val <= 0 || !Number.isInteger(units) || units < 1 || units > 100000) {
+        showToast('⚠️ Укажите операцию, время и целое количество деталей'); return;
+      }
+      const unitTargetSec = Math.max(1, Math.round((calcMode === 'total' ? val / units : val) * 60));
+      const totalMin = calcMode === 'total' ? val : val * units;
+      factState = {
+        active: true, savedShift: false, name, totalMin, totalUnits: units, doneUnits: 0,
+        autoNext, startedAt: Date.now(), currentUnitStartMs: Date.now(), currentUnitElapsedSec: 0, unitTargetSec,
+        unitStats: [], paused: false, totalPausedMs: 0, pauseStartedAt: 0
+      };
+      document.getElementById('factorySummaryCard').classList.add('hidden');
+      persistFactory();
+      setupMediaSessionHandlers();
+      playBeep(700, 0.1, 1);
+      renderFactoryUI();
+    }
+
+    function handleFactoryMainBtn() {
+      if (!factState.active || factState.paused) return;
+      const now = Date.now();
+      const elapsed = Math.max(1, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
+      factState.unitStats = Array.isArray(factState.unitStats) ? factState.unitStats : [];
+      factState.unitStats.push({ unit: factState.doneUnits + 1, plannedSec: factState.unitTargetSec, actualSec: elapsed, endedAt: now });
+      factState.doneUnits++;
+      if (factState.doneUnits >= factState.totalUnits) {
+        finishFactoryBatchEarly(true);
+        return;
+      }
+      factState.currentUnitStartMs = now;
+      factState.currentUnitElapsedSec = 0;
+      factState.totalPausedMs = 0;
+      factState.pauseStartedAt = 0;
+      factState.paused = false;
+      factWarned20 = false; factWarnedZero = false;
+      persistFactory();
+      playBeep(720, 0.08, 1);
+      renderFactoryUI();
+    }
+
+    function finishFactoryBatchEarly(completedAll = false) {
+      if (!factState.active) return;
+      const now = Date.now();
+      const history = safeJsonParse(localStorage.getItem('m_factory_history'), []);
+      const record = {
+        name: factState.name, startedAt: factState.startedAt, endedAt: now,
+        totalUnits: factState.totalUnits, doneUnits: factState.doneUnits,
+        plannedTotalSec: Math.round((factState.totalMin || 0) * 60),
+        actualTotalSec: (factState.unitStats || []).reduce((sum, x) => sum + (x.actualSec || 0), 0),
+        unitStats: factState.unitStats || [], completedAll: !!completedAll
+      };
+      history.unshift(record);
+      try { localStorage.setItem('m_factory_history', JSON.stringify(history.slice(0, 100))); } catch(e) {}
+      factState.active = false; factState.paused = false; factState.savedShift = false;
+      persistFactory();
+      playBeep(completedAll ? 880 : 620, 0.12, completedAll ? 3 : 2);
+      vibrate([100, 50, 100]);
+      const avg = record.doneUnits ? Math.round(record.actualTotalSec / record.doneUnits) : 0;
+      document.getElementById('factorySummaryContent').innerHTML =
+        `<div><b>Операция:</b> ${esc(record.name)}</div>` +
+        `<div><b>Готово:</b> ${record.doneUnits} из ${record.totalUnits} шт.</div>` +
+        `<div><b>Среднее на штуку:</b> ${fmtSec(avg)}</div>` +
+        `<div><b>Статус:</b> ${completedAll ? 'Партия завершена' : 'Закрыта досрочно'}</div>`;
+      document.getElementById('factorySummaryCard').classList.remove('hidden');
+      showToast(completedAll ? '🏁 Партия полностью завершена' : '🏁 Партия закрыта досрочно');
+      renderFactoryUI();
+    }
+
+    function addFactoryUnitMinute() {
+      if (!factState.active || factState.paused) return;
+      factState.unitTargetSec += 60;
+      factWarned20 = false; factWarnedZero = false;
+      persistFactory(); renderFactoryUI(); showToast('＋ К норме добавлена 1 минута');
+    }
+
+    function confirmFactoryReset() {
+      if (!factState.active) return;
+      if (!confirm('Сбросить текущую партию? Уже учтённые детали останутся в истории только после закрытия партии.')) return;
+      factState.active = false; factState.paused = false; persistFactory();
+      factState = { active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
+      persistFactory(); renderFactoryUI(); showToast('↺ Партия сброшена');
+    }
+
+    function saveFactoryShift() {
+      if (!factState.active) return;
+      const now = Date.now();
+      const endPoint = factState.paused ? (factState.pauseStartedAt || now) : now;
+      factState.currentUnitElapsedSec = Math.max(0, Math.floor((endPoint - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
+      factState.savedShift = true; factState.active = false; factState.paused = true;
+      factState.savedAt = now; persistFactory();
+      showToast('💾 Смена сохранена на этом устройстве');
+      renderFactoryUI();
+    }
+
+    function resumeFactoryShift() {
+      if (!factState.savedShift || !factState.totalUnits) return;
+      factState.active = true; factState.savedShift = false; factState.paused = false;
+      factState.currentUnitStartMs = Date.now() - Math.max(0, factState.currentUnitElapsedSec || 0) * 1000;
+      factState.totalPausedMs = 0; factState.pauseStartedAt = 0;
+      factWarned20 = false; factWarnedZero = false; persistFactory(); renderFactoryUI();
+    }
+
+    function renderFactoryUI() {
+      const setup = document.getElementById('factorySetupPanel');
+      const active = document.getElementById('factoryActivePanel');
+      if (!setup || !active) return;
+      const summary = document.getElementById('factSavedShiftBadge');
+      if (factState.active) {
+        setup.classList.add('hidden'); active.classList.remove('hidden');
+        document.getElementById('factActiveName').textContent = factState.name;
+        document.getElementById('factActiveCount').textContent = `${factState.doneUnits} / ${factState.totalUnits} шт`;
+        document.getElementById('factBatchProgress').style.width = `${Math.min(100, factState.doneUnits / Math.max(1, factState.totalUnits) * 100)}%`;
+        document.getElementById('factUnitNormInfo').textContent = `Норма: ${fmtSec(factState.unitTargetSec)} · Осталось: ${factState.totalUnits - factState.doneUnits} шт`;
+        document.getElementById('factStepCounter').textContent = `Деталь ${factState.doneUnits + 1} из ${factState.totalUnits}${factState.paused ? ' · ПАУЗА' : ''}`;
+        document.getElementById('factCurrentTaskName').textContent = factState.name;
+        document.getElementById('factPauseBtn').textContent = factState.paused ? '▶' : '⏸';
+        const elapsed = factState.paused
+          ? Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000)
+          : Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
+        const rem = factState.unitTargetSec - elapsed;
+        document.getElementById('factTimerDisplay').textContent = fmtSec(rem);
+        document.getElementById('factStepProgressBar').style.width = `${Math.max(0, Math.min(100, rem / Math.max(1, factState.unitTargetSec) * 100))}%`;
+        document.getElementById('factTimerDisplay').classList.toggle('text-rose-400', rem < 0);
+        document.getElementById('factTimerDisplay').classList.toggle('text-white', rem >= 0);
+        document.getElementById('factStepProgressBar').classList.toggle('bg-rose-500', rem < 0);
+        document.getElementById('factStepProgressBar').classList.toggle('bg-emerald-500', rem >= 0);
+        if (summary) summary.classList.add('hidden');
+      } else {
+        setup.classList.remove('hidden'); active.classList.add('hidden');
+        document.getElementById('factStepCounter').textContent = factState.savedShift ? 'Смена сохранена' : 'Партия не запущена';
+        document.getElementById('factCurrentTaskName').textContent = factState.savedShift ? factState.name : 'Готов к работе';
+        document.getElementById('factTimerDisplay').textContent = '00:00';
+        document.getElementById('factStepProgressBar').style.width = '100%';
+        if (summary) summary.classList.toggle('hidden', !factState.savedShift);
+      }
+      // Кнопка возобновления сохранённой смены добавляется один раз.
+      let resumeBtn = document.getElementById('resumeFactoryBtn');
+      if (factState.savedShift && !resumeBtn) {
+        resumeBtn = document.createElement('button'); resumeBtn.id = 'resumeFactoryBtn'; resumeBtn.type = 'button';
+        resumeBtn.className = 'w-full py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold';
+        resumeBtn.textContent = '▶ Возобновить сохранённую смену'; resumeBtn.onclick = resumeFactoryShift;
+        setup.appendChild(resumeBtn);
+      } else if (!factState.savedShift && resumeBtn) resumeBtn.remove();
+    }
+
+    // Разблокировка WebAudio только после реального действия пользователя.
+    document.addEventListener('pointerdown', () => {
+      try {
+        if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } catch(e) {}
+    }, { once:true, passive:true });
+
     setInterval(() => {
       if (currentMode === 'morning') {
         if (activeIdx >= 0 && activeIdx < tasks.length && !paused) {
@@ -2032,19 +2645,19 @@
             }
           }
         }
-      } else if (currentMode === 'factory' && factState.active && !paused) {
-        stepElapsedSec = Math.floor((Date.now() - factState.currentUnitStartMs - totalPausedMs) / 1000);
-        const rem = factState.unitTargetSec - stepElapsedSec;
+      } else if (currentMode === 'factory' && factState.active && !factState.paused) {
+        const factElapsedSec = Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
+        const rem = factState.unitTargetSec - factElapsedSec;
         const warnPoint = Math.max(1, Math.round(factState.unitTargetSec * 0.2));
 
-        if (rem <= warnPoint && rem > 0 && !warned20) {
-          warned20 = true;
+        if (rem <= warnPoint && rem > 0 && !factWarned20) {
+          factWarned20 = true;
           playBeep(750, 0.08, 2);
           vibrate(40);
         }
 
-        if (rem <= 0 && !warnedZero) {
-          warnedZero = true;
+        if (rem <= 0 && !factWarnedZero) {
+          factWarnedZero = true;
           playBeep(500, 0.12, 3);
           vibrate([80, 40, 80]);
           if (factState.autoNext) {
@@ -2060,7 +2673,7 @@
     }, 500);
 
     function exportData() {
-      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null), factorySession: factState };
+      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null), factorySession: factState, factoryHistory: safeJsonParse(localStorage.getItem('m_factory_history'), []) };
       const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
@@ -2079,7 +2692,11 @@
           const okJournal = data.journal === undefined || (Array.isArray(data.journal) &&
             data.journal.every(j => j && Number.isFinite(Number(j.date || j.endedAt)) &&
               (j.stats === undefined || Array.isArray(j.stats))));
-          if (!okTemplates || !okJournal) {
+          const okFactory = data.factorySession === undefined || (data.factorySession && typeof data.factorySession === 'object' &&
+            Number.isFinite(Number(data.factorySession.totalUnits || 0)) && Number(data.factorySession.totalUnits || 0) >= 0 &&
+            Number.isFinite(Number(data.factorySession.doneUnits || 0)) && Number(data.factorySession.doneUnits || 0) >= 0 &&
+            Array.isArray(data.factorySession.unitStats || []));
+          if (!okTemplates || !okJournal || !okFactory) {
             alert('Файл не похож на резервную копию — импорт отменён.');
             return;
           }
@@ -2093,17 +2710,24 @@
           localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
           if (Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
           if (data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
+          if (data.factorySession && typeof data.factorySession === 'object') localStorage.setItem('m_factory_session', JSON.stringify(data.factorySession));
+          if (Array.isArray(data.factoryHistory)) localStorage.setItem('m_factory_history', JSON.stringify(data.factoryHistory));
           alert('Импорт успешен! Страница будет перезагружена.');
           location.reload();
         } catch(err) { alert('Ошибка чтения файла!'); }
       }; reader.readAsText(file);
     }
 
+    document.getElementById('factTimeVal').addEventListener('input', updateFactCalc);
+    document.getElementById('factTotalUnits').addEventListener('input', updateFactCalc);
+
     try {
       openTemplateConstructor(activeTemplateIdx);
       renderTemplates();
       renderJournal();
       render();
+      switchMode(currentMode === 'factory' ? 'factory' : 'morning');
+      renderFactoryUI();
     } catch (err) {
       const vs = document.getElementById('voiceStatus');
       if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
