@@ -2,7 +2,7 @@
 <html lang="ru" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
   <title>Утренний Темп-Будильник PRO+</title>
 
   <link rel="manifest" href="manifest.json">
@@ -21,6 +21,8 @@
     body.state-ok { background:#0f291e !important; }
     body.state-warn { background:#3b2a0a !important; }
     body.state-over { animation:pulseRed 1.2s infinite alternate; }
+    body.no-motion *, body.no-motion *::before, body.no-motion *::after { animation:none !important; transition:none !important; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:0.01ms !important; transition-duration:0.01ms !important; } body.state-over { animation:none !important; } }
     @keyframes pulseRed { from{background:#3b0d0d} to{background:#691010} }
     .tabular-nums { font-variant-numeric:tabular-nums; }
     .btn-giant { width:100%; min-height:136px;
@@ -93,6 +95,8 @@
             <span>Дедлайн выхода:</span>
           </label>
           <div class="flex items-center gap-2">
+            <input type="date" id="deadlineDate" aria-label="Дата выхода" onchange="saveSettings();render()"
+              class="bg-slate-950 text-white border border-slate-600 rounded-lg px-2 py-1 text-xs font-bold tabular-nums" />
             <input type="time" id="deadlineTime" value="07:45" onchange="saveSettings();render()"
               class="bg-slate-950 text-white border border-slate-600 rounded-lg px-2.5 py-1 text-sm font-bold tabular-nums focus:outline-none focus:border-sky-400" />
             <span id="deadlineDiff" class="font-extrabold text-xs sm:text-sm px-2.5 py-1 rounded-lg bg-slate-900 tabular-nums">Запас: -- мин</span>
@@ -113,6 +117,17 @@
               <input type="checkbox" id="autoVoiceWindowToggle" checked onchange="saveSettings()" class="w-4 h-4 accent-sky-400 rounded cursor-pointer" />
               <span>🎙 Окно голоса 5 сек после 20% / финиша / просрочки</span>
             </label>
+            <label class="flex items-center gap-2 font-semibold text-amber-200 cursor-pointer">
+              <input type="checkbox" id="autoSkipOptionalToggle" onchange="saveSettings()" class="w-4 h-4 accent-amber-400 rounded cursor-pointer" />
+              <span>Разрешить автопропуск необязательных задач (по умолчанию выкл.)</span>
+            </label>
+            <label class="flex items-center gap-2 font-semibold text-slate-300 cursor-pointer">
+              <input type="checkbox" id="reduceMotionToggle" onchange="saveSettings()" class="w-4 h-4 accent-slate-400 rounded cursor-pointer" />
+              <span>Уменьшить анимацию и пульсацию</span>
+            </label>
+            <label class="flex items-center gap-2 text-slate-300 text-xs">Резерв перед выходом:
+              <input type="number" id="exitBufferMin" min="0" max="180" step="1" value="5" onchange="saveSettings();render()" class="w-16 bg-slate-950 border border-slate-600 rounded px-2 py-1 text-center text-white" /> мин
+            </label>
             <label class="flex items-center gap-2 font-semibold text-emerald-300 cursor-pointer">
               <input type="checkbox" id="notifyToggle" onchange="toggleNotificationsSetting(this)" class="w-4 h-4 accent-emerald-400 rounded cursor-pointer" />
               <span>🔔 Системные уведомления на экран</span>
@@ -122,6 +137,10 @@
             <button type="button" onclick="compressToDeadline(true)"
               class="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs active:scale-95 transition">Сжать сейчас</button>
           </div>
+        </div>
+        <div class="pt-2 border-t border-slate-800 space-y-2">
+          <button type="button" onclick="previewDeadlinePlan()" class="w-full py-2 rounded-xl bg-slate-800 border border-slate-600 text-sky-200 text-xs font-extrabold">Показать расчёт плана до дедлайна</button>
+          <div id="plannerPreview" class="hidden text-xs text-slate-300 bg-slate-950/70 border border-slate-700 rounded-xl p-3 space-y-1" aria-live="polite"></div>
         </div>
       </div>
 
@@ -296,38 +315,31 @@
         </div>
 
         <div id="factorySetupPanel" class="space-y-3">
-          <div>
-            <label class="text-xs text-slate-400 font-bold block mb-1">Операция / узел:</label>
-            <input type="text" id="factOpName" placeholder="Например: Аптечка №7, карман"
-              class="w-full bg-slate-950 border border-slate-600 rounded-xl px-3 py-2 text-sm text-white font-bold focus:border-emerald-500 outline-none" />
-          </div>
-
-          <!-- Переключатель режима ввода времени партии -->
-          <div class="bg-slate-900 border border-slate-700 rounded-xl p-1 flex gap-1">
-            <button type="button" id="subTabTotal" onclick="setCalcMode('total')" class="calc-subtab active">По общему времени</button>
-            <button type="button" id="subTabPerUnit" onclick="setCalcMode('perUnit')" class="calc-subtab">По времени на 1 шт</button>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label id="factTimeLabel" class="text-xs text-slate-400 font-bold block mb-1">Общее время:</label>
-              <div class="flex items-center gap-1">
-                <input type="number" id="factTimeVal" placeholder="Мин" min="0.5" step="0.5"
-                  class="w-full bg-slate-950 border border-slate-600 rounded-xl px-3 py-2 text-sm text-white font-bold text-center focus:border-emerald-500 outline-none tabular-nums" />
-                <span id="factTimeUnit" class="text-xs text-slate-500">мин</span>
-              </div>
+          <div class="space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-extrabold text-slate-200">Технологическая карта партии</div>
+              <button type="button" onclick="addFactoryPlanRow()" class="px-3 py-1.5 rounded-lg bg-sky-700 text-white text-xs font-bold">＋ Операция</button>
             </div>
-            <div>
-              <label class="text-xs text-slate-400 font-bold block mb-1">Количество (шт):</label>
-              <div class="flex items-center gap-1">
-                <input type="number" id="factTotalUnits" placeholder="Шт" min="1" step="1"
-                  class="w-full bg-slate-950 border border-slate-600 rounded-xl px-3 py-2 text-sm text-white font-bold text-center focus:border-emerald-500 outline-none tabular-nums" />
-                <span class="text-xs text-slate-500">шт</span>
-              </div>
+            <div class="overflow-x-auto rounded-xl border border-slate-700">
+              <table class="w-full min-w-[560px] text-[11px]">
+                <thead class="bg-slate-900 text-slate-400"><tr>
+                  <th class="p-2 text-left">Операция / узел</th><th class="p-2">Кол-во</th><th class="p-2">Общее время, мин</th><th class="p-2">На 1 шт, мин</th><th class="p-2">Итого</th><th></th>
+                </tr></thead>
+                <tbody id="factoryPlanBody">
+                  <tr class="border-t border-slate-800" data-factory-row>
+                    <td class="p-1"><input data-field="name" aria-label="Название операции" value="Основная операция" class="w-full min-w-[120px] bg-slate-950 border border-slate-700 rounded px-2 py-2 text-white" /></td>
+                    <td class="p-1"><input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="10" oninput="syncFactoryRow(this,'units')" class="w-16 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+                    <td class="p-1"><input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="30" oninput="syncFactoryRow(this,'total')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+                    <td class="p-1"><input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="3" oninput="syncFactoryRow(this,'unit')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+                    <td data-field="sum" class="p-2 text-center text-emerald-300 font-bold tabular-nums">30 мин</td>
+                    <td class="p-1"><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-2 text-rose-300">✕</button></td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
+            <div id="factCalcResult" class="text-xs font-bold text-sky-300" aria-live="polite">Всего: 10 шт · 30 мин</div>
+            <p class="text-[10px] text-slate-500">Меняй общее время или норму на штуку — второе значение пересчитается автоматически. Можно добавить несколько операций в одну партию.</p>
           </div>
-          <div id="factCalcResult" class="text-xs font-bold text-sky-400 min-h-[18px]"></div>
-
           <div class="space-y-2 pt-1 border-t border-slate-800">
             <label class="flex items-center gap-2 font-semibold text-slate-300 text-xs cursor-pointer">
               <input type="checkbox" id="factAutoNext" checked class="w-4 h-4 accent-sky-500 rounded" />
@@ -350,6 +362,10 @@
             <div id="factBatchProgress" class="h-full bg-sky-500 transition-all duration-300" style="width:0%"></div>
           </div>
           <div id="factUnitNormInfo" class="text-xs text-slate-400 tabular-nums"></div>
+          <label class="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2">
+            <input id="factAutoNextLive" type="checkbox" checked onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500" />
+            Автоматически засчитывать деталь по истечении нормы
+          </label>
         </div>
       </div>
 
@@ -376,6 +392,7 @@
             class="row-btn py-3 px-1 rounded-xl border border-rose-500/40 bg-rose-950/70 text-rose-200 text-sm font-bold">↺</button>
         </div>
 
+        <button type="button" onclick="skipFactoryUnit()" class="w-full py-2.5 rounded-xl border border-rose-500/40 bg-rose-950/70 text-rose-200 text-xs font-extrabold">✕ Брак / пропустить текущую деталь</button>
         <div class="grid grid-cols-2 gap-2 pt-1">
           <button type="button" onclick="saveFactoryShift()"
             class="py-2.5 px-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold active:scale-95 transition">
@@ -405,12 +422,18 @@
           <option value="7">За 7 дней</option><option value="30">За месяц</option><option value="all">Всё время</option>
         </select>
       </div>
-      <div id="journalList" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
+      <div class="space-y-1">
+        <div class="text-[10px] text-slate-500">Сравнение фактического времени с планом по последним кругам</div>
+        <div id="chartContainer" class="h-24 flex items-end gap-1 rounded-lg bg-slate-950/60 border border-slate-800 px-2 pt-2" aria-label="График истории"></div>
+      </div>
+      <div id="tipsContainer" class="text-[11px] text-slate-400 bg-slate-900/60 rounded-lg p-2" aria-live="polite">Соберите статистику завершённых кругов, чтобы получить советы.</div>
+      <div id="journalList" class="space-y-2 max-h-[28rem] overflow-y-auto pr-1"></div>
     </div>
 
     <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl flex gap-2">
       <button type="button" onclick="exportData()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📤 Бэкап в файл</button>
-      <button type="button" onclick="document.getElementById('importFile').click()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📥 Восстановить</button>
+      <button type="button" onclick="restoreAutoBackup()" class="flex-1 py-2 rounded-xl bg-indigo-950 border border-indigo-600 text-xs font-bold text-indigo-200">↶ Авто-бэкап</button>
+      <button type="button" onclick="document.getElementById('importFile').click()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📥 Импорт</button>
       <input type="file" id="importFile" accept=".json" class="hidden" onchange="importData(event)">
     </div>
 
@@ -449,6 +472,19 @@
         return fallback;
       }
     }
+    const APP_BUILD_VERSION = '3.0.0';
+    (function autoBackupBeforeUpgrade() {
+      try {
+        const previous = localStorage.getItem('m_app_build_version');
+        if (previous !== APP_BUILD_VERSION) {
+          const keys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional'];
+          const snapshot = { version:previous || 'до версии 3.0.0', createdAt:Date.now(), values:{} };
+          keys.forEach(k => { const v = localStorage.getItem(k); if (v !== null) snapshot.values[k] = v; });
+          localStorage.setItem('m_auto_recovery_backup', JSON.stringify(snapshot));
+          localStorage.setItem('m_app_build_version', APP_BUILD_VERSION);
+        }
+      } catch(e) { /* Не блокируем запуск, если хранилище недоступно. */ }
+    })();
 
     // --- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ЦЕХА ---
     let currentMode = localStorage.getItem('m_app_mode') || 'morning';
@@ -464,13 +500,20 @@
       customTemplates = [{ id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) }];
       localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates));
     }
+    customTemplates = customTemplates.map((tpl, ti) => ({ ...tpl, tasks:(Array.isArray(tpl.tasks)?tpl.tasks:[]).map((t, i) => {
+      const min = Math.max(0.5, Number(t.min ?? t.originalMin) || 5), planned = Math.round(min*60);
+      return { ...t, id:t.id || `tpl-${ti}-task-${i}-${Math.random().toString(36).slice(2,6)}`, min, originalMin:min,
+        minSec:Number.isFinite(Number(t.minSec)) ? Math.max(30,Math.min(planned,Number(t.minSec))) : Math.max(30,Math.round(planned*0.5)),
+        priority:[1,2,3,4].includes(Number(t.priority))?Number(t.priority):2, required:!!t.required, compressedSec:null, addedSec:0 };
+    }) }));
+    try { localStorage.setItem('m_custom_templates', JSON.stringify(customTemplates)); } catch(e) {}
 
     let activeTemplateIdx = parseInt(localStorage.getItem('m_active_tpl_idx') || '0', 10);
     if (isNaN(activeTemplateIdx) || activeTemplateIdx < 0 || activeTemplateIdx >= customTemplates.length) activeTemplateIdx = 0;
 
     let session = safeJsonParse(localStorage.getItem('m_active_session'), null);
     let tasks = [];
-    if (session && Array.isArray(session.tasks) && session.tasks.length && typeof session.activeIdx === 'number' && session.activeIdx >= -1 && session.activeIdx < session.tasks.length) {
+    if (session && Array.isArray(session.tasks) && session.tasks.length && typeof session.activeIdx === 'number' && session.activeIdx >= -1 && session.activeIdx <= session.tasks.length) {
       tasks = session.tasks;
       if (typeof session.activeTemplateIdx === 'number' && customTemplates[session.activeTemplateIdx]) {
         activeTemplateIdx = session.activeTemplateIdx;
@@ -483,7 +526,16 @@
       tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
     }
 
-    let activeIdx = (session && typeof session.activeIdx === 'number' && session.activeIdx < tasks.length) ? session.activeIdx : -1;
+    tasks = tasks.map((t, i) => {
+      const planned = Math.max(30, Math.round((Number(t.originalMin ?? t.min) || 1) * 60));
+      return { ...t, id: t.id || `task-${Date.now()}-${i}-${Math.random().toString(36).slice(2,7)}`,
+        priority: [1,2,3,4].includes(Number(t.priority)) ? Number(t.priority) : 2,
+        minSec: Number.isFinite(Number(t.minSec)) ? Math.max(30, Math.min(planned, Number(t.minSec))) : Math.max(30, Math.round(planned * 0.5)),
+        required: !!t.required, status: t.status || 'pending' };
+    });
+    let activeIdx = (session && typeof session.activeIdx === 'number' && session.activeIdx <= tasks.length) ? session.activeIdx : -1;
+    let sessionStatus = session?.status || (activeIdx >= tasks.length ? 'completed' : activeIdx >= 0 ? (session?.paused ? 'paused' : 'running') : 'idle');
+    let routineDeadlineAt = Number(session?.routineDeadlineAt || 0);
     let stepStartMs = session ? session.stepStartMs : 0;
     let routineStartedAt = session ? (session.routineStartedAt || 0) : 0;
     let forceOriginalRun = session ? !!session.forceOriginalRun : false;
@@ -504,7 +556,12 @@
     let constructorDraftTasks = JSON.parse(JSON.stringify(customTemplates[activeTemplateIdx].tasks));
 
     let stepDurationSec = (activeIdx >= 0 && activeIdx < tasks.length) ? getStepTargetSec(activeIdx) : 0;
-    let stepElapsedSec = 0;
+    let stepElapsedSec = session && Number.isFinite(Number(session.stepElapsedSec)) ? Math.max(0, Number(session.stepElapsedSec)) : 0;
+    if (session && activeIdx >= 0 && activeIdx < tasks.length && stepStartMs) {
+      const elapsedAt = paused ? (pauseStartMs || Date.now()) : Date.now();
+      stepElapsedSec = Math.max(stepElapsedSec, Math.floor((elapsedAt - stepStartMs - (totalPausedMs || 0)) / 1000));
+      stepDurationSec = Number(session.stepDurationSec) || getStepTargetSec(activeIdx);
+    }
     let wakeLock = null, audioCtx = null, keepAliveActive = false;
     let dragState = { timerId: null, startX: 0, startY: 0, fromIdx: -1, toIdx: -1, active: false };
 
@@ -523,7 +580,13 @@
       unitTargetSec: 0, unitStats: []
     };
 
-    factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 }, factState);
+    factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0, operations:[], operationIndex:0, goodUnits:0, skippedUnits:0 }, factState);
+    if (factState.goodUnits == null) factState.goodUnits = Number(factState.doneUnits) || 0;
+    if (factState.skippedUnits == null) factState.skippedUnits = 0;
+    if (factState.active && (!Array.isArray(factState.operations) || !factState.operations.length)) {
+      factState.operations = [{ name:factState.name || 'Операция', units:factState.totalUnits || 1, totalMin:factState.totalMin || 1, unitTargetSec:factState.unitTargetSec || 60, doneUnits:factState.doneUnits || 0, unitStats:factState.unitStats || [] }];
+      factState.operationIndex = 0;
+    }
     let factWarned20 = false, factWarnedZero = false;
 
     // --- ПЕРЕХВАТ НАУШНИКОВ ---
@@ -531,8 +594,8 @@
       if ('navigator' in window && 'mediaSession' in navigator) {
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: 'Темп-Будильник Цех',
-            artist: 'Производственный таймер',
+            title: 'Темп-Будильник',
+            artist: currentMode === 'factory' ? 'Производственный поток' : 'Цепочка задач',
             album: 'Швейный поток'
           });
           navigator.mediaSession.setActionHandler('nexttrack', () => {
@@ -565,19 +628,23 @@
 
     // --- UNDO И СОХРАНЕНИЕ ---
     function pushUndo(label) {
+      const undoId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
       undoStack.push({
+        id:undoId,
         label,
+        journal:JSON.parse(JSON.stringify(journal)),
         tasks: JSON.parse(JSON.stringify(tasks)),
         activeIdx, stepDurationSec, stepElapsedSec, stepStartMs,
         totalPausedMs, pauseStartMs, paused, savedSec,
         warned50, warned20, warnedZero, lastOvertimeWarnMin,
         routineStats: JSON.parse(JSON.stringify(routineStats)),
-        routineStartedAt, forceOriginalRun
+        routineStartedAt, routineDeadlineAt, sessionStatus, forceOriginalRun
       });
       if (undoStack.length > 10) undoStack.shift();
+      return undoId;
     }
 
-    function showUndoToast(message) {
+    function showUndoToast(message, undoId = null) {
       const box = document.getElementById('toastBox');
       if (!box) return;
       const el = document.createElement('div');
@@ -589,7 +656,8 @@
       btn.className = 'px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs flex-shrink-0 active:scale-95 transition';
       btn.textContent = '↩ Отменить';
       btn.onclick = () => {
-        const snap = undoStack.pop();
+        const snapIndex = undoId ? undoStack.findIndex(x => x.id === undoId) : undoStack.length - 1;
+        const snap = snapIndex >= 0 ? undoStack.splice(snapIndex, 1)[0] : null;
         if (snap) {
           tasks = JSON.parse(JSON.stringify(snap.tasks));
           activeIdx = snap.activeIdx;
@@ -603,9 +671,13 @@
           warned50 = !!snap.warned50; warned20 = !!snap.warned20; warnedZero = !!snap.warnedZero;
           lastOvertimeWarnMin = snap.lastOvertimeWarnMin || 0;
           routineStats = JSON.parse(JSON.stringify(snap.routineStats || []));
+          journal = JSON.parse(JSON.stringify(snap.journal || journal));
+          try { localStorage.setItem('m_journal', JSON.stringify(journal)); } catch(e) {}
           routineStartedAt = snap.routineStartedAt || 0;
+          routineDeadlineAt = snap.routineDeadlineAt || 0;
+          sessionStatus = snap.sessionStatus || 'running';
           forceOriginalRun = !!snap.forceOriginalRun;
-          saveTasks(); saveSession(); render();
+          saveTasks(); saveSession(); renderJournal(); render();
           showToast('↩ Действие отменено');
         }
         el.remove();
@@ -632,8 +704,8 @@
 
     function saveSession() {
       const s = {
-        activeIdx, activeTemplateIdx, stepStartMs, totalPausedMs, pauseStartMs,
-        paused, savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin,
+        activeIdx, activeTemplateIdx, stepStartMs, stepElapsedSec, stepDurationSec, totalPausedMs, pauseStartMs,
+        paused, status: sessionStatus, routineDeadlineAt, savedSec, warned50, warned20, warnedZero, lastOvertimeWarnMin,
         routineStats, tasks, routineStartedAt, forceOriginalRun
       };
       try {
@@ -647,6 +719,8 @@
       localStorage.removeItem('m_active_session');
       session = null;
       routineStartedAt = 0;
+      routineDeadlineAt = 0;
+      sessionStatus = 'idle';
       forceOriginalRun = false;
     }
     function saveTasks() {
@@ -667,6 +741,11 @@
       localStorage.setItem('m_auto_voice_win', document.getElementById('autoVoiceWindowToggle').checked);
       localStorage.setItem('m_notify', document.getElementById('notifyToggle').checked);
       localStorage.setItem('m_deadline_time', document.getElementById('deadlineTime').value);
+      localStorage.setItem('m_deadline_date', document.getElementById('deadlineDate').value);
+      localStorage.setItem('m_exit_buffer_min', document.getElementById('exitBufferMin').value || '5');
+      localStorage.setItem('m_auto_skip_optional', document.getElementById('autoSkipOptionalToggle').checked);
+      localStorage.setItem('m_reduce_motion', document.getElementById('reduceMotionToggle').checked);
+      document.body.classList.toggle('no-motion', document.getElementById('reduceMotionToggle').checked);
     }
     (function loadSettings() {
       const a = localStorage.getItem('m_auto_compress');
@@ -681,6 +760,17 @@
       if (n !== null) document.getElementById('notifyToggle').checked = safeJsonParse(n, false);
       const t = localStorage.getItem('m_deadline_time');
       if (t) document.getElementById('deadlineTime').value = t;
+      const dateEl = document.getElementById('deadlineDate');
+      const todayLocal = new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+      const storedDate = localStorage.getItem('m_deadline_date');
+      dateEl.value = (sessionStatus === 'running' || sessionStatus === 'paused') && storedDate ? storedDate : (storedDate && storedDate >= todayLocal ? storedDate : todayLocal);
+      const buffer = localStorage.getItem('m_exit_buffer_min');
+      if (buffer !== null) document.getElementById('exitBufferMin').value = buffer;
+      const autoSkip = localStorage.getItem('m_auto_skip_optional');
+      if (autoSkip !== null) document.getElementById('autoSkipOptionalToggle').checked = safeJsonParse(autoSkip, false);
+      const motion = localStorage.getItem('m_reduce_motion');
+      if (motion !== null) document.getElementById('reduceMotionToggle').checked = safeJsonParse(motion, false);
+      document.body.classList.toggle('no-motion', document.getElementById('reduceMotionToggle').checked);
     })();
 
     function toggleNotificationsSetting(checkbox) {
@@ -702,10 +792,10 @@
       if (!toggle || !toggle.checked) return;
       try {
         if (!('Notification' in window) || Notification.permission !== 'granted') return;
-        if ('serviceWorker' in navigator) {
-          navigator.serviceWorker.ready.then(reg => {
-            if (reg && reg.showNotification) reg.showNotification(title, { body, vibrate: [100, 50, 100] });
-            else new Notification(title, { body });
+        if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistration) {
+          navigator.serviceWorker.getRegistration().then(reg => {
+            if (reg && reg.showNotification) return reg.showNotification(title, { body, vibrate: [100, 50, 100] });
+            new Notification(title, { body });
           }).catch(() => { try { new Notification(title, { body }); } catch(e){} });
         } else {
           new Notification(title, { body });
@@ -822,10 +912,17 @@
     }
 
     function getDeadlineDate(now = new Date()) {
-      const [dh, dm] = (document.getElementById('deadlineTime').value || '07:45').split(':').map(Number);
-      const dl = new Date(now); dl.setHours(dh, dm, 0, 0);
-      if (dl.getTime() - now.getTime() < -6 * 3600 * 1000) dl.setDate(dl.getDate() + 1);
-      return dl;
+      if (routineDeadlineAt && sessionStatus !== 'idle' && sessionStatus !== 'completed') return new Date(routineDeadlineAt);
+      const dateValue = document.getElementById('deadlineDate')?.value;
+      const timeValue = document.getElementById('deadlineTime')?.value || '07:45';
+      if (!dateValue) return new Date(NaN);
+      const [y, mo, d] = dateValue.split('-').map(Number);
+      const [dh, dm] = timeValue.split(':').map(Number);
+      return new Date(y, mo - 1, d, dh, dm, 0, 0);
+    }
+    function getDeadlineBudgetSec(now = new Date()) {
+      const buffer = Math.max(0, Number(document.getElementById('exitBufferMin')?.value) || 0) * 60;
+      return Math.floor((getDeadlineDate(now).getTime() - now.getTime()) / 1000) - buffer;
     }
     function getRemainingTotalSec(fromIdx = activeIdx) {
       if (tasks.length === 0) return 0;
@@ -835,69 +932,108 @@
       for (let i=fromIdx+1; i<tasks.length; i++) total += getStepTargetSec(i);
       return total;
     }
+    function buildDeadlinePlan(startIdx, availableSec, includeCurrent = true) {
+      const entries = [];
+      for (let i = startIdx; i < tasks.length; i++) {
+        const isCurrent = includeCurrent && i === activeIdx;
+        const elapsed = isCurrent ? Math.max(0, stepElapsedSec) : 0;
+        const target = isCurrent ? stepDurationSec : getStepTargetSec(i);
+        const remaining = Math.max(0, target - elapsed);
+        const t = tasks[i];
+        const minTotal = Math.max(30, Math.min(target, Number(t.minSec ?? Math.max(30, target * 0.5))));
+        const minRemaining = isCurrent ? Math.max(0, minTotal - elapsed) : minTotal;
+        entries.push({ i, isCurrent, elapsed, remaining, minRemaining: Math.min(remaining, minRemaining), priority: Number(t.priority || 2), required: !!t.required, locked: !!t.locked, allocation: remaining, skipped: false });
+      }
+      const originalTotal = entries.reduce((a, x) => a + x.remaining, 0);
+      let deficit = Math.max(0, originalTotal - Math.max(0, availableSec));
+      // Сначала уменьшаем низкие приоритеты; внутри уровня пропорционально доступному сокращению.
+      for (const priority of [1, 2, 3, 4]) {
+        if (deficit <= 0) break;
+        const group = entries.filter(x => x.priority === priority && !x.locked);
+        const capacity = group.reduce((a, x) => a + Math.max(0, x.allocation - x.minRemaining), 0);
+        const cut = Math.min(deficit, capacity);
+        if (cut > 0 && capacity > 0) {
+          let left = cut;
+          for (const x of group) {
+            const cap = Math.max(0, x.allocation - x.minRemaining);
+            const reduction = Math.min(cap, left);
+            x.allocation -= reduction;
+            left -= reduction;
+            if (left <= 0) break;
+          }
+          deficit -= (cut - left);
+        }
+      }
+      const skipped = [];
+      if (deficit > 0 && document.getElementById('autoSkipOptionalToggle')?.checked) {
+        const optional = entries.filter(x => !x.required && !x.locked && !x.isCurrent).sort((a,b) => a.priority - b.priority || b.i - a.i);
+        for (const x of optional) {
+          if (deficit <= 0) break;
+          const freed = x.allocation;
+          x.allocation = 0; x.skipped = true; skipped.push(x.i); deficit -= freed;
+        }
+      }
+      const scheduledTotal = entries.reduce((a, x) => a + x.allocation, 0);
+      return { entries, originalTotal, scheduledTotal, availableSec, deficit: Math.max(0, deficit), skipped, feasible: deficit <= 0 && scheduledTotal <= availableSec };
+    }
+
+    function previewDeadlinePlan() {
+      const startIdx = activeIdx >= 0 && activeIdx < tasks.length ? activeIdx : 0;
+      const now = new Date();
+      const available = getDeadlineBudgetSec(now);
+      const plan = buildDeadlinePlan(startIdx, available, activeIdx >= 0);
+      const box = document.getElementById('plannerPreview');
+      if (!box) return;
+      const rows = plan.entries.map(x => {
+        const t = tasks[x.i];
+        const change = x.skipped ? 'будет пропущено' : x.allocation < x.remaining ? `${fmtSec(x.remaining)} → ${fmtSec(x.allocation)}` : `${fmtSec(x.allocation)} без изменений`;
+        return `<div class="flex justify-between gap-3 border-t border-slate-800 py-1"><span>${x.i+1}. ${esc(t.title)} · ${{4:'крит.',3:'выс.',2:'сред.',1:'низк.'}[x.priority] || 'сред.'}</span><strong class="text-right ${x.skipped?'text-rose-300':x.allocation<x.remaining?'text-amber-300':'text-slate-200'}">${change}</strong></div>`;
+      }).join('');
+      const status = plan.feasible ? `<strong class="text-emerald-300">План помещается с учётом резерва ${Math.max(0,Number(document.getElementById('exitBufferMin').value)||0)} мин.</strong>` : `<strong class="text-rose-300">Не успеваем минимум на ${fmtSec(plan.deficit)}. Автопропуск необязательных задач ${document.getElementById('autoSkipOptionalToggle').checked?'включён':'выключен'}.</strong>`;
+      const deadlineMs = getDeadlineDate(now).getTime();
+      const latestStartMs = deadlineMs - Math.max(0,Number(document.getElementById('exitBufferMin').value)||0)*60000 - plan.originalTotal*1000;
+      const latestStartText = Number.isFinite(latestStartMs) ? new Date(latestStartMs).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—';
+      box.innerHTML = `<div>${status}</div><div>Доступно: ${fmtSec(Math.max(0,available))} · Требуется после распределения: ${fmtSec(plan.scheduledTotal)}</div><div class="text-sky-300">Если идти по исходным длительностям, начать нужно было не позднее ${latestStartText}.</div>${rows}<div class="text-[10px] text-slate-500">Расчёт предварительный. Завершённые задачи не меняются. Изменения применятся при запуске/переходе к следующему шагу.</div>`;
+      box.classList.remove('hidden');
+    }
+
     function compressToDeadline(isManual=false, targetStartIdx=null) {
       const useDl = document.getElementById('useDeadline').checked;
       if (!useDl && !isManual) return { compressed:false, lateMin:0 };
-      const now = new Date(), deadline = getDeadlineDate(now);
-      const availableSec = Math.floor((deadline - now) / 1000);
+      const now = new Date();
+      const deadline = getDeadlineDate(now);
+      const availableSec = getDeadlineBudgetSec(now);
       const startIdx = targetStartIdx !== null ? targetStartIdx : (activeIdx >= 0 ? activeIdx : 0);
       if (startIdx >= tasks.length) return { compressed:false, lateMin:0 };
-
-      const entries = [];
-      for (let i=startIdx; i<tasks.length; i++) {
-        const isCurrent = i === activeIdx && targetStartIdx === null;
-        const remaining = isCurrent
-          ? Math.max(0, stepDurationSec - stepElapsedSec)
-          : getStepTargetSec(i);
-        const locked = !!tasks[i].locked;
-        entries.push({ i, isCurrent, locked, baseSec: Math.max(0, remaining) });
+      const plan = buildDeadlinePlan(startIdx, availableSec, targetStartIdx === null);
+      if (plan.originalTotal <= availableSec) {
+        if (isManual) showToast('✅ План уже укладывается в дедлайн с резервом');
+        return { compressed:false, lateMin:0, plan };
       }
-      const totalBefore = entries.reduce((sum, x) => sum + x.baseSec, 0);
-      const lateSec = totalBefore - availableSec;
-      const lateMin = Math.max(1, Math.ceil(lateSec / 60));
-      if (lateSec <= 0) {
-        if (isManual) showToast('✅ План уже укладывается в дедлайн');
-        return { compressed:false, lateMin:0 };
-      }
-
-      const lockedSec = entries.filter(x => x.locked).reduce((sum, x) => sum + x.baseSec, 0);
-      const flexible = entries.filter(x => !x.locked);
-      const minimumFlexibleSec = flexible.length * 30;
-      const flexibleBudget = availableSec - lockedSec;
-      if (availableSec <= 0 || flexibleBudget < minimumFlexibleSec) {
-        const message = availableSec <= 0
-          ? 'Дедлайн уже наступил — сжать план в оставшееся время невозможно.'
-          : `Невозможно уложиться: обязательные и минимальные интервалы требуют ещё ${Math.ceil((lockedSec + minimumFlexibleSec - Math.max(0, availableSec))/60)} мин.`;
-        showToast('⚠️ ' + message);
-        return { compressed:false, impossible:true, lateMin };
-      }
-      if (!flexible.length) {
-        showToast('⚠️ Все оставшиеся задачи защищены от сжатия');
-        return { compressed:false, impossible:true, lateMin };
-      }
-
-      if (isManual) pushUndo('Сжатие под дедлайн');
-      const flexibleTotal = flexible.reduce((sum, x) => sum + x.baseSec, 0);
-      const ratio = Math.min(1, Math.max(0, (flexibleBudget - minimumFlexibleSec) / Math.max(1, flexibleTotal - minimumFlexibleSec)));
-      for (const item of flexible) {
-        const task = tasks[item.i];
-        if (task.originalMin == null) task.originalMin = task.min;
-        const desiredRemaining = Math.max(30, Math.floor(item.baseSec - (item.baseSec - 30) * (1 - ratio)));
-        if (item.isCurrent) {
-          const newTotalTarget = stepElapsedSec + desiredRemaining;
-          task.compressedSec = Math.max(30, newTotalTarget - (task.addedSec || 0));
-          stepDurationSec = getStepTargetSec(item.i);
-        } else {
-          task.compressedSec = Math.max(30, desiredRemaining - (task.addedSec || 0));
+      const undoId = isManual ? pushUndo('Перераспределение под дедлайн') : null;
+      let compressed = false;
+      for (const item of plan.entries) {
+        const t = tasks[item.i];
+        if (item.skipped) {
+          t.status = 'skipped-planned'; t.plannedSkip = true; compressed = true;
+          continue;
+        }
+        t.plannedSkip = false;
+        if (item.allocation < item.remaining) {
+          const targetTotal = item.isCurrent ? item.elapsed + item.allocation : item.allocation;
+          t.compressedSec = Math.max(0, targetTotal - (t.addedSec || 0));
+          if (item.isCurrent) stepDurationSec = Math.max(stepElapsedSec, targetTotal);
+          compressed = true;
         }
       }
       saveSession(); render();
-      if (isManual) {
-        playBeep(680,0.1,2);
-        speakRu(`План сокращён. Исходное отставание ${lateMin} минут. Защищённые задачи не изменены.`);
-        showUndoToast(`⚡ Сжатие применено; защищённые задачи сохранены`);
-      }
-      return { compressed:true, lateMin };
+      const lateMin = Math.max(1, Math.ceil(plan.deficit / 60));
+      const msg = plan.feasible
+        ? `⚡ План перераспределён по приоритетам. Резерв выхода ${Math.max(0,Number(document.getElementById('exitBufferMin').value)||0)} мин учтён.`
+        : `⚠️ Не успеваем минимум на ${lateMin} мин. Минимумы задач сохранены; автоматический пропуск ${document.getElementById('autoSkipOptionalToggle').checked?'применён где разрешён':'выключен'}.`;
+      if (isManual) { showToast(msg); showUndoToast('↩ Отменить перераспределение', undoId); }
+      else if (!plan.feasible) showToast(msg);
+      return { compressed, impossible:!plan.feasible, lateMin, plan };
     }
 
     function toggleLock(idx) {
@@ -1024,9 +1160,10 @@
       const insertIdx = clampedPos - 1;
       const capTitle = title.charAt(0).toUpperCase() + title.slice(1);
       const safeMin = Math.max(0.5, Number(min) || 5);
-      tasks.splice(insertIdx, 0, { title: capTitle, min: safeMin, originalMin: safeMin, compressedSec: null, addedSec: 0 });
+      tasks.splice(insertIdx, 0, { id:`task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, title: capTitle, min: safeMin, originalMin: safeMin, minSec:Math.max(30,Math.round(safeMin*30)), priority:2, required:false, status:'pending', compressedSec: null, addedSec: 0 });
       if (activeIdx >= 0 && insertIdx <= activeIdx) activeIdx++;
       saveTasks();
+      saveSession();
       render();
       speakRu(`Добавлено ${clampedPos}-м пунктом: ${capTitle}, ${min} минут`);
       showToast(`＋ ${clampedPos}-й пункт: ${capTitle} (${min} мин)`);
@@ -1091,7 +1228,7 @@
     }
 
     function extractTaskItemsFromText(rawText, targetArray, allowWithoutMinutes = false) {
-      const normalized = normalizeSpokenNumbers(rawText).replace(/[.,!?]+$/g, '').trim();
+      const normalized = normalizeSpokenNumbers(rawText).replace(/(\d),(\d)/g, '$1.$2').replace(/[!?]+$/g, '').trim();
       if (!normalized) return 0;
 
       const segmented = normalized
@@ -1111,11 +1248,10 @@
           const parsedMin = parseFloat(minMatch[2].replace(',', '.'));
           if (titleClean && !isNaN(parsedMin) && parsedMin > 0) {
             targetArray.push({
+              id:`task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
               title: titleClean.charAt(0).toUpperCase() + titleClean.slice(1),
-              min: parsedMin,
-              originalMin: parsedMin,
-              compressedSec: null,
-              addedSec: 0
+              min: parsedMin, originalMin: parsedMin, minSec:Math.max(30,Math.round(parsedMin*30)), priority:2, required:false, status:'pending',
+              compressedSec: null, addedSec: 0
             });
             added++;
             return;
@@ -1124,11 +1260,10 @@
 
         if (allowWithoutMinutes && !/^(?:добавь|добавить|впиши|закинь|удали|убери|поменяй|сделай|поставь)$/i.test(cleaned)) {
           targetArray.push({
+            id:`task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
             title: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
-            min: 5,
-            originalMin: 5,
-            compressedSec: null,
-            addedSec: 0
+            min: 5, originalMin: 5, minSec:150, priority:2, required:false, status:'pending',
+            compressedSec: null, addedSec: 0
           });
           added++;
         }
@@ -1137,7 +1272,7 @@
     }
 
     function interpretSinglePhrase(rawPhrase) {
-      const text = normalizeSpokenNumbers(rawPhrase).replace(/[.,!?]+$/g, '').trim();
+      const text = normalizeSpokenNumbers(rawPhrase).replace(/(\d),(\d)/g, '$1.$2').replace(/[!?]+$/g, '').trim();
       if (!text || text.length < 2) return false;
 
       if (/закройся|закрой таймер|вырубай|стоп.*отмен|отмени сесси|отмени вс[еe]|сбрось вс[еe]|стоп игра/.test(text)) {
@@ -1267,7 +1402,7 @@
         }
       }
 
-      if (/^(?:убери|удали|вычеркни|снеси)\b/i.test(text)) {
+      if (/^(?:убери|удали|вычеркни|снеси)(?:\s|$)/i.test(text)) {
         const cleanedTarget = text
           .replace(/^(?:убери|удали|вычеркни|снеси)\s+/i, '')
           .replace(/\s+\d+(?:[.,]\d+)?\s*(?:минут[ауы]?|мин|м)?$/i, '')
@@ -1305,15 +1440,15 @@
     }
 
     function parseVoiceChain(fullText) {
-      const normalized = normalizeSpokenNumbers(fullText).trim();
+      const normalized = normalizeSpokenNumbers(fullText).replace(/(\d),(\d)/g, '$1.$2').trim();
       if (!normalized) return false;
 
-      if (/^(?:добавь|добавить|впиши|закинь)\b/i.test(normalized) && !/\b(?:удали|убери|поменяй|сделай|поставь|пауза|дальше)\b/i.test(normalized)) {
+      if (/^(?:добавь|добавить|впиши|закинь)(?:\s|$)/i.test(normalized) && !/(?:^|\s)(?:удали|убери|поменяй|сделай|поставь|пауза|дальше)(?=\s|$)/i.test(normalized)) {
         return interpretSinglePhrase(normalized);
       }
 
       const parts = normalized
-        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)\b))/i)
+        .split(/(?:,\s*|\s+и потом\s+|\s+затем\s+|\s+потом\s+|\s+и\s+(?=(?:добавь|добавить|впиши|закинь|удали|убери|вычеркни|снеси|поменяй|сделай|поставь|накинь|убавь|сократи|пауза|дальше|готово|скип|пропусти|сжать)(?=\s|$)))/i)
         .map(s => s.trim())
         .filter(Boolean);
 
@@ -1336,7 +1471,7 @@
     }
 
     function parseConstructorVoiceDictation(fullText) {
-      const normalized = normalizeSpokenNumbers(fullText).trim();
+      const normalized = normalizeSpokenNumbers(fullText).replace(/(\d),(\d)/g, '$1.$2').trim();
       if (!normalized) return false;
 
       const nameInput = document.getElementById('constructorNameInput');
@@ -1565,7 +1700,10 @@
     function updateConstructorTask(i, field, val) {
       if (!constructorDraftTasks[i]) return;
       if (field === 'title') constructorDraftTasks[i].title = val.trim() || constructorDraftTasks[i].title;
-      if (field === 'min') constructorDraftTasks[i].min = Math.max(0.5, parseFloat(val) || 5);
+      if (field === 'min') { constructorDraftTasks[i].min = Math.max(0.5, parseFloat(val) || 5); if (!constructorDraftTasks[i].minSec) constructorDraftTasks[i].minSec = Math.round(constructorDraftTasks[i].min*30); }
+      if (field === 'minSec') constructorDraftTasks[i].minSec = Math.max(30, Math.min(Math.round((constructorDraftTasks[i].min||5)*60), Math.round((Number(val)||0.5)*60)));
+      if (field === 'priority') constructorDraftTasks[i].priority = Number(val);
+      if (field === 'required') constructorDraftTasks[i].required = !!val;
       renderConstructor();
     }
 
@@ -1589,13 +1727,12 @@
       }
       const nameInput = document.getElementById('constructorNameInput');
       const name = nameInput.value.trim() || `Шаблон ${customTemplates.length + 1}`;
-      const cleanTasks = constructorDraftTasks.map(t => ({
-        title: t.title,
-        min: Number(t.min) || 5,
-        originalMin: Number(t.min) || 5,
-        compressedSec: null,
-        addedSec: 0
-      }));
+      const cleanTasks = constructorDraftTasks.map((t, i) => {
+        const min = Number(t.min) || 5, planned = Math.round(min*60);
+        return { ...t, id:t.id || `task-${Date.now()}-${i}`, title:t.title, min, originalMin:min,
+          minSec:Number.isFinite(Number(t.minSec))?Math.max(0,Math.min(planned,Number(t.minSec))):Math.max(30,Math.round(planned*0.5)),
+          priority:[1,2,3,4].includes(Number(t.priority))?Number(t.priority):2, required:!!t.required, compressedSec:null, addedSec:0 };
+      });
 
       if (constructorEditIdx >= 0 && customTemplates[constructorEditIdx]) {
         customTemplates[constructorEditIdx].name = name;
@@ -1619,7 +1756,8 @@
       } else {
         if (activeIdx === -1 || activeIdx >= tasks.length) {
           tasks = JSON.parse(JSON.stringify(cleanTasks));
-          render();
+          activeIdx = -1; sessionStatus = 'idle';
+          saveTasks(); saveSession(); render();
         }
         showToast(`💾 Шаблон «${name}» сохранён`);
       }
@@ -1673,15 +1811,15 @@
           const op = (Number(st.plannedSec) || 0);
           const sp = Number.isFinite(st.scheduledSec) ? st.scheduledSec : op;
           const compressedStep = (sp - (Number(st.liveAdjSec) || 0)) < op - 1;
-          const act = st.skipped ? 0 : (Number(st.actualSec) || 0);
+          const act = Number(st.actualSec) || 0;
           return `<div class="flex flex-col gap-0.5 border-t border-slate-800 py-1.5 text-[11px]">
-            <div class="flex justify-between gap-2"><span class="text-slate-200">${i+1}. ${esc(st.title || 'Шаг')}</span><span>${st.skipped ? 'Пропуск' : fmtSec(act)}</span></div>
+            <div class="flex justify-between gap-2"><span class="text-slate-200">${i+1}. ${esc(st.title || 'Шаг')}</span><span>${st.skipped ? `Пропуск · затрачено ${fmtSec(act)}` : fmtSec(act)}</span></div>
             <div class="text-slate-500">Исходный ${fmtSec(op)} · План прохода ${fmtSec(sp)}${compressedStep ? ' ⚡' : ''} · ${st.skipped ? 'пропуск' : 'отклонение '+fmtSignedDiff(act-sp)}</div>
           </div>`;
         }).join('');
         return `<details class="bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-2">
           <summary class="cursor-pointer list-none">
-            <div class="flex justify-between items-start gap-2"><strong class="text-sm text-white">${esc(j.templateName || 'Утренний шаблон')}</strong><span class="text-[10px] text-slate-400">${dateText}</span></div>
+            <div class="flex justify-between items-start gap-2"><strong class="text-sm text-white">${j.mode === 'factory' ? '🏭 ' : '🌅 '}${esc(j.templateName || 'Утренний шаблон')}</strong><span class="text-[10px] text-slate-400">${dateText}</span></div>
             <div class="text-[11px] text-slate-400 mt-1">${timeText}</div>
             <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] mt-2">
               <span>План: ${fmtSec(plan)}</span><span>Факт: ${fmtSec(actual)}</span>
@@ -1689,6 +1827,8 @@
               ${compressed ? '<span class="text-amber-300">⚡ Сжатый план</span>' : '<span class="text-slate-400">Исходный план</span>'}
             </div>
             ${compressed ? `<div class="text-[10px] text-amber-300 mt-1">Исходно ${fmtSec(originalPlan)} · отклонение от исходного ${fmtSignedDiff(originalDiff)}</div>` : ''}
+            ${j.totalWallSec ? `<div class="text-[10px] text-slate-400 mt-1">Полная длительность: ${fmtSec(j.totalWallSec)} · время по таймеру: ${fmtSec(actual)} · выполненные задачи: ${fmtSec(j.totalWorkActual ?? actual)} · до пропусков: ${fmtSec(j.totalSkippedTimeSec || 0)}</div>` : ''}
+            ${j.deadlineAt ? `<div class="text-[10px] ${Number(j.deadlineDeltaSec)<=0?'text-emerald-300':'text-rose-300'} mt-1">Дедлайн выхода с резервом ${Math.round((j.deadlineBufferSec||0)/60)} мин: ${Number(j.deadlineDeltaSec)<=0?'раньше на '+fmtSec(Math.abs(Number(j.deadlineDeltaSec)||0)):'опоздание '+fmtSec(Number(j.deadlineDeltaSec)||0)}</div>` : ''}
             <div class="text-[10px] text-sky-300 mt-1">Нажмите, чтобы раскрыть шаги</div>
           </summary>
           <div class="mt-2">${stepRows || '<div class="text-xs text-slate-500">Нет подробной статистики</div>'}</div>
@@ -1736,8 +1876,7 @@
       }
       activeTemplateIdx = idx;
       localStorage.setItem('m_active_tpl_idx', String(activeTemplateIdx));
-      tasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks));
-      tasks.forEach(t => { t.originalMin = t.min; t.compressedSec = null; t.addedSec = 0; });
+      tasks = JSON.parse(JSON.stringify(customTemplates[idx].tasks)).map((t, i) => ({ ...t, id:t.id || `task-${Date.now()}-${i}`, originalMin:t.min, minSec:Number.isFinite(Number(t.minSec))?Number(t.minSec):Math.max(30,Math.round((Number(t.min)||5)*30)), priority:[1,2,3,4].includes(Number(t.priority))?Number(t.priority):2, required:!!t.required, status:'pending', compressedSec:null, addedSec:0 }));
       openTemplateConstructor(idx);
       resetRoutine();
       renderTemplates();
@@ -1759,8 +1898,10 @@
       const t = document.getElementById('newTaskTitle').value.trim(), m = parseFloat(document.getElementById('newTaskMin').value)||5;
       if(!t) return;
       const safeMin = Math.max(0.5, Number.isFinite(m) ? m : 5);
-      tasks.push({ title:t.charAt(0).toUpperCase()+t.slice(1), min:safeMin, originalMin:safeMin, compressedSec:null, addedSec:0 });
-      document.getElementById('newTaskTitle').value=''; saveTasks(); render();
+      if (activeIdx >= tasks.length || sessionStatus === 'completed') { activeIdx = -1; sessionStatus = 'idle'; routineStats = []; routineStartedAt = 0; routineDeadlineAt = 0; }
+      const plannedSec = Math.round(safeMin * 60);
+      tasks.push({ id:`task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, title:t.charAt(0).toUpperCase()+t.slice(1), min:safeMin, originalMin:safeMin, minSec:Math.max(30,Math.round(plannedSec*0.5)), priority:2, required:false, status:'pending', compressedSec:null, addedSec:0 });
+      document.getElementById('newTaskTitle').value=''; saveTasks(); saveSession(); render();
     }
     function removeTask(i, fromVoice = false) {
       if (!tasks[i]) return;
@@ -1769,9 +1910,10 @@
       if (!fromVoice && removingActive && !confirm('Удалить текущий активный шаг? Его прогресс будет сброшен, следующий шаг начнётся заново.')) return;
       const removed = tasks[i];
       const removedTitle = removed.title;
-      pushUndo('Удаление пункта');
-      if (wasLastActive) {
+      const undoId = pushUndo('Удаление пункта');
+      if (removingActive) {
         routineStats.push({
+          id: removed.id,
           title: removed.title,
           plannedSec: Math.round((removed.originalMin ?? removed.min) * 60),
           liveAdjSec: removed.addedSec || 0,
@@ -1799,7 +1941,7 @@
       }
       if (!wasLastActive) { saveTasks(); saveSession(); }
       render();
-      showUndoToast(`🗑 Удалено: «${removedTitle}»`);
+      showUndoToast(`🗑 Удалено: «${removedTitle}»`, undoId);
     }
     function startEditTask(i) {
       editingTaskIdx = i;
@@ -1821,6 +1963,12 @@
         tasks[i].originalMin = newMin;
         tasks[i].compressedSec = null;
       }
+      const minSecEl = document.getElementById(`editTaskMinSec_${i}`);
+      const priorityEl = document.getElementById(`editTaskPriority_${i}`);
+      const requiredEl = document.getElementById(`editTaskRequired_${i}`);
+      if (minSecEl && Number.isFinite(Number(minSecEl.value))) tasks[i].minSec = Math.max(30, Math.min(Math.round((tasks[i].originalMin || tasks[i].min)*60), Math.round(Number(minSecEl.value)*60)));
+      if (priorityEl) tasks[i].priority = Number(priorityEl.value);
+      if (requiredEl) tasks[i].required = requiredEl.checked;
       if (i === activeIdx) {
         stepDurationSec = getStepTargetSec(i);
       }
@@ -1833,15 +1981,12 @@
 
     function moveTask(fromIdx, toIdx) {
       if(fromIdx===toIdx || fromIdx<0 || toIdx<0 || fromIdx>=tasks.length || toIdx>=tasks.length) return;
-      const movedTitle = tasks[fromIdx].title;
+      const currentId = activeIdx >= 0 && activeIdx < tasks.length ? tasks[activeIdx].id : null;
+      const undoId = pushUndo('Перемещение задачи');
       const [moved] = tasks.splice(fromIdx, 1); tasks.splice(toIdx, 0, moved);
-      if(activeIdx >= 0 && activeIdx < tasks.length) {
-        if(activeIdx === fromIdx) activeIdx = toIdx;
-        else if(fromIdx < activeIdx && toIdx >= activeIdx) activeIdx--;
-        else if(fromIdx > activeIdx && toIdx <= activeIdx) activeIdx++;
-      }
-      saveTasks(); render(); vibrate([30, 40, 30]);
-      showToast(`⇅ «${movedTitle}» перемещено с ${fromIdx+1}-го на ${toIdx+1}-е место`);
+      if (currentId) activeIdx = tasks.findIndex(t => t.id === currentId);
+      saveTasks(); saveSession(); render();
+      showUndoToast(`↕ Перемещено: «${moved.title}»`, undoId);
     }
 
     function attachRowTouchHandlers(rowEl, idx) {
@@ -1932,8 +2077,13 @@
               <span class="text-xs font-bold text-sky-300">${i+1}.</span>
               <input id="editTaskTitle_${i}" type="text" value="${esc(t.title)}"
                 class="flex-1 bg-slate-950 text-white border border-slate-600 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-sky-400" />
-              <input id="editTaskMin_${i}" type="number" value="${esc(t.min)}" min="0.5" step="0.5"
+              <input id="editTaskMin_${i}" type="number" value="${esc(t.min)}" min="0.5" step="0.5" aria-label="Обычная длительность в минутах"
                 class="w-16 bg-slate-950 text-sky-300 border border-slate-600 rounded-lg px-2 py-1.5 text-sm font-bold text-center tabular-nums" />
+              <input id="editTaskMinSec_${i}" type="number" min="0.5" value="${Math.max(0.5,Math.round((t.minSec ?? Math.min(t.min*60,Math.max(30,t.min*30)))/60*10)/10)}" min="0" step="0.5" aria-label="Минимум минут" title="Минимум минут" class="w-14 bg-slate-950 text-amber-200 border border-slate-600 rounded-lg px-1 py-1.5 text-xs text-center" />
+              <select id="editTaskPriority_${i}" aria-label="Приоритет" class="w-20 bg-slate-950 text-white border border-slate-600 rounded-lg px-1 py-1.5 text-xs">
+                <option value="4" ${Number(t.priority||2)===4?'selected':''}>Критич.</option><option value="3" ${Number(t.priority||2)===3?'selected':''}>Высокий</option><option value="2" ${Number(t.priority||2)===2?'selected':''}>Средний</option><option value="1" ${Number(t.priority||2)===1?'selected':''}>Низкий</option>
+              </select>
+              <label class="text-[10px] text-slate-300 flex items-center gap-1"><input id="editTaskRequired_${i}" type="checkbox" ${t.required?'checked':''}/>Обяз.</label>
               <button type="button" onclick="saveEditTask(${i})" class="px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-black text-xs">✓</button>
               <button type="button" onclick="cancelEditTask()" class="px-2 py-1.5 rounded-lg bg-slate-700 text-slate-300 font-bold text-xs">✕</button>
             </div>
@@ -1945,11 +2095,15 @@
             <div class="flex items-center gap-2 truncate pr-1">
               <span class="text-slate-400 text-sm cursor-grab px-0.5">⋮⋮</span>
               <span class="truncate">${i+1}. ${esc(t.title)}</span>
+              <span class="text-[10px] ml-1 flex-shrink-0 ${Number(t.priority||2)>=3?'text-amber-300':'text-slate-500'}">${({4:'КРИТ.',3:'ВЫС.',2:'СРЕД.',1:'НИЗК.'})[Number(t.priority||2)] || 'СРЕД.'}</span>
               <span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span>
+              <span class="text-[10px] text-slate-500 flex-shrink-0">мин. ${fmtSec(t.minSec ?? Math.max(30,Math.round((t.min||1)*30)))}</span>
               <span class="drag-badge drag-badge-from ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500 text-slate-950">⇅ Откуда</span>
               <span class="drag-badge drag-badge-to ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-400 text-slate-950"></span>
             </div>
             <div class="flex items-center gap-0.5 flex-shrink-0">
+              <button type="button" onclick="moveTask(${i}, ${i-1})" aria-label="Переместить ${esc(t.title)} выше" title="Выше" ${i===0?'disabled':''} class="text-slate-400 disabled:opacity-20 px-1 font-bold row-btn">↑</button>
+              <button type="button" onclick="moveTask(${i}, ${i+1})" aria-label="Переместить ${esc(t.title)} ниже" title="Ниже" ${i===tasks.length-1?'disabled':''} class="text-slate-400 disabled:opacity-20 px-1 font-bold row-btn">↓</button>
               <button type="button" onclick="toggleLock(${i})" title="Блокировать сжатие" class="${t.locked?'text-amber-400':'text-slate-400 hover:text-slate-300'} px-2 font-bold row-btn">${t.locked?'🔒':'🔓'}</button>
               <button type="button" onclick="startEditTask(${i})" title="Изменить название и время" class="text-sky-300 hover:text-sky-200 px-2 font-bold row-btn">✎</button>
               <button type="button" onclick="removeTask(${i})" title="Удалить" class="text-rose-400 hover:text-rose-300 px-2 font-bold row-btn">✕</button>
@@ -1977,7 +2131,7 @@
         const useDl = document.getElementById('useDeadline').checked;
         const dlEl = document.getElementById('deadlineDiff');
         if(useDl) {
-          const diffMin = Math.round((getDeadlineDate(now) - forecast)/60000);
+          const diffMin = Math.round((getDeadlineDate(now) - forecast - Math.max(0,Number(document.getElementById('exitBufferMin')?.value)||0)*60000)/60000);
           if(diffMin>=0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
           else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
         } else { dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8'; }
@@ -2040,7 +2194,7 @@ function addConstructorTask() {
       const title = titleInput.value.trim();
       const min = parseFloat(minInput.value) || 5;
       if (!title) return;
-      constructorDraftTasks.push({ title: title.charAt(0).toUpperCase() + title.slice(1), min });
+      constructorDraftTasks.push({ id:`task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, title: title.charAt(0).toUpperCase() + title.slice(1), min, minSec:Math.max(30,Math.round(min*30)), priority:2, required:false });
       titleInput.value = '';
       renderConstructor();
     }
@@ -2066,9 +2220,11 @@ function applySummaryToTemplate(asNewVersion) {
       if (!pendingSuggestions.length) return;
       const sourceTpl = customTemplates[activeTemplateIdx] || customTemplates[0];
       const updatedTasks = sourceTpl.tasks.map((t, i) => {
-        const sug = pendingSuggestions[i];
+        const sug = pendingSuggestions.find(x => (x.id && t.id && x.id === t.id) || (!x.id && x.idx === i));
         const nextMin = (sug && sug.enabled) ? sug.suggestedMin : t.min;
-        return { title: t.title, min: nextMin, originalMin: nextMin, compressedSec: null, addedSec: 0 };
+        const nextSec = Math.round(nextMin*60);
+        return { ...t, id:t.id || `task-${Date.now()}-${i}`, min:nextMin, originalMin:nextMin,
+          minSec:Math.max(30,Math.min(nextSec, Number(t.minSec ?? Math.max(30,nextSec*0.5)))), compressedSec:null, addedSec:0, status:'pending' };
       });
 
       if (asNewVersion) {
@@ -2107,15 +2263,19 @@ function finishRoutine() {
 
       const endedAt = Date.now();
       const startedAt = routineStartedAt || (routineStats.find(s => s.startedAt)?.startedAt) || endedAt;
+      const deadlineAt = routineDeadlineAt || 0;
+      const deadlineBufferSec = Math.max(0, Number(document.getElementById('exitBufferMin')?.value) || 0) * 60;
+      const deadlineDeltaSec = deadlineAt ? endedAt - (deadlineAt - deadlineBufferSec * 1000) : null;
       let totalOriginalPlan = 0, totalPlan = 0, totalAct = 0, totalLiveAdj = 0;
       routineStats.forEach(s => {
         totalOriginalPlan += (s.plannedSec || 0);
         totalLiveAdj += (s.liveAdjSec || 0);
         totalPlan += (Number.isFinite(s.scheduledSec) ? s.scheduledSec : (s.plannedSec + (s.liveAdjSec || 0)));
-        if (!s.skipped) totalAct += s.actualSec;
+        totalAct += Number(s.actualSec) || 0;
       });
 
       clearSession();
+      sessionStatus = 'completed';
       journal.push({
         date: endedAt,
         startedAt,
@@ -2126,6 +2286,10 @@ function finishRoutine() {
         totalOriginalPlan,
         totalLiveAdj,
         totalActual: totalAct,
+        totalWorkActual: routineStats.reduce((sum, st) => sum + (!st.skipped ? (Number(st.actualSec)||0) : 0), 0),
+        totalSkippedTimeSec: routineStats.reduce((sum, st) => sum + (st.skipped ? (Number(st.actualSec)||0) : 0), 0),
+        totalWallSec: Math.max(0, Math.round((endedAt - startedAt)/1000)),
+        deadlineAt, deadlineBufferSec, deadlineDeltaSec,
         wasCompressed: (totalPlan - totalLiveAdj) < totalOriginalPlan - 1,
         stats: routineStats.map(s => ({...s}))
       });
@@ -2136,7 +2300,8 @@ function finishRoutine() {
         showToast('⚠️ Журнал не сохранился: память переполнена');
       }
 
-      renderSummaryCard(routineStats);
+      saveSession();
+      renderSummaryCard(routineStats, { deadlineAt, deadlineBufferSec, deadlineDeltaSec });
       renderJournal();
       render();
       notify('Утренний Темп-Будильник', 'Отличная работа! Все ритуалы завершены 🎉');
@@ -2169,13 +2334,14 @@ function handleMainBtn() {
         if (tasks.length === 0) { showToast('⚠️ Добавьте задачи!'); return; }
         savedSec = 0; routineStats = []; paused = false; lastOvertimeWarnMin = 0;
         routineStartedAt = 0; forceOriginalRun = false;
-        tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; t.addedSec=0; });
+        tasks.forEach(t => { t.compressedSec=null; t.originalMin=t.min; t.addedSec=0; t.status='pending'; t.plannedSkip=false; });
         document.getElementById('summaryCard').classList.add('hidden');
         startStep(0);
       } else {
         const diff = stepDurationSec - stepElapsedSec;
         if (diff > 0) savedSec += diff;
         routineStats.push({
+          id: tasks[activeIdx].id,
           title: tasks[activeIdx].title,
           plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
           liveAdjSec: tasks[activeIdx].addedSec || 0,
@@ -2185,6 +2351,7 @@ function handleMainBtn() {
           endedAt: Date.now(),
           skipped: false
         });
+        tasks[activeIdx].status = 'completed';
         if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
         else finishRoutine();
       }
@@ -2225,10 +2392,13 @@ function renderConstructor() {
           <input type="text" value="${esc(t.title)}"
             onchange="updateConstructorTask(${i}, 'title', this.value)"
             class="flex-1 bg-transparent text-white focus:outline-none" />
-          <input type="number" value="${esc(t.min)}" min="0.5" step="0.5"
+          <input type="number" value="${esc(t.min)}" min="0.5" step="0.5" aria-label="Длительность в минутах"
             onchange="updateConstructorTask(${i}, 'min', this.value)"
             class="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-sky-300 font-bold tabular-nums" />
           <span class="text-slate-500 text-[10px]">мин</span>
+          <input type="number" value="${Math.max(0.5,Math.round((t.minSec ?? Math.max(30,Math.round((t.min||1)*30)))/60*10)/10)}" min="0.5" step="0.5" aria-label="Минимум минут" title="Минимум минут" onchange="updateConstructorTask(${i}, 'minSec', this.value)" class="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-center text-amber-200 text-[10px]" />
+          <select aria-label="Приоритет" onchange="updateConstructorTask(${i}, 'priority', this.value)" class="w-16 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-white"><option value="4" ${Number(t.priority||2)===4?'selected':''}>Крит.</option><option value="3" ${Number(t.priority||2)===3?'selected':''}>Выс.</option><option value="2" ${Number(t.priority||2)===2?'selected':''}>Сред.</option><option value="1" ${Number(t.priority||2)===1?'selected':''}>Низк.</option></select>
+          <label class="text-[9px] text-slate-400 flex items-center gap-1"><input type="checkbox" ${t.required?'checked':''} onchange="updateConstructorTask(${i}, 'required', this.checked)"/>обяз.</label>
           <button type="button" onclick="moveConstructorTask(${i}, -1)" class="px-1.5 text-slate-400 hover:text-white">↑</button>
           <button type="button" onclick="moveConstructorTask(${i}, 1)" class="px-1.5 text-slate-400 hover:text-white">↓</button>
           <button type="button" onclick="removeConstructorTask(${i})" class="px-1.5 text-rose-400 font-bold">✕</button>
@@ -2237,7 +2407,7 @@ function renderConstructor() {
     }
 
 // Восстановлено из стабильной версии: renderSummaryCard
-function renderSummaryCard(stats) {
+function renderSummaryCard(stats, deadlineInfo = null) {
       const card = document.getElementById('summaryCard');
       const listEl = document.getElementById('summaryList');
       const badgeEl = document.getElementById('summaryTotalBadge');
@@ -2253,7 +2423,7 @@ function renderSummaryCard(stats) {
       listEl.innerHTML = stats.map((s, i) => {
         const originalPlan = (s.plannedSec || 0);
         const scheduledPlan = Number.isFinite(s.scheduledSec) ? s.scheduledSec : originalPlan;
-        const actual = s.skipped ? 0 : (s.actualSec || 0);
+        const actual = Number(s.actualSec) || 0;
         originalTotal += originalPlan;
         scheduledTotal += scheduledPlan;
         actualTotal += actual;
@@ -2276,14 +2446,14 @@ function renderSummaryCard(stats) {
           if (Math.abs(rawTargetMin - suggestedMin) >= 0.5) suggestedMin = rawTargetMin;
         }
         pendingSuggestions.push({
-          idx: i, title: s.title, suggestedMin,
+          idx: i, id:s.id || null, title: s.title, suggestedMin,
           enabled: Math.abs(suggestedMin - Math.round(((s.plannedSec || 0) / 60) * 2) / 2) >= 0.5
         });
 
         return `<div class="bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl mb-1">
           <div class="flex justify-between items-center gap-2">
             <span class="font-bold text-slate-200 truncate">${i+1}. ${esc(s.title)}</span>
-            <span class="text-white text-xs flex-shrink-0">Факт: ${s.skipped ? '—' : fmtSec(actual)}</span>
+            <span class="text-white text-xs flex-shrink-0">${s.skipped ? `Пропуск · ${fmtSec(actual)}` : `Факт: ${fmtSec(actual)}`}</span>
           </div>
           ${compressionNote}${liveNote}
           <div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 mt-1">
@@ -2317,18 +2487,20 @@ function renderSummaryCard(stats) {
         <div class="flex justify-between gap-2"><span>План прохода / факт:</span><strong class="text-sky-300">${fmtSec(scheduledTotal)} / ${fmtSec(actualTotal)}</strong></div>
         <div class="flex justify-between gap-2"><span>Отклонение от плана прохода:</span><strong>${fmtSignedDiff(scheduledDiff)}</strong></div>
         <div class="flex justify-between gap-2"><span>Исходный план / отклонение:</span><strong>${fmtSec(originalTotal)} / ${fmtSignedDiff(originalDiff)}</strong></div>
+        <div class="text-[10px] text-slate-400">Факт включает время, потраченное на пропущенные шаги; выполненная работа учитывается отдельно в журнале.</div>
+        ${deadlineInfo?.deadlineAt ? `<div class="text-[11px] ${deadlineInfo.deadlineDeltaSec <= 0 ? 'text-emerald-300' : 'text-rose-300'}">Относительно дедлайна выхода с резервом ${Math.round(deadlineInfo.deadlineBufferSec/60)} мин: ${deadlineInfo.deadlineDeltaSec <= 0 ? 'успели на ' + fmtSec(Math.abs(deadlineInfo.deadlineDeltaSec)) + ' раньше' : 'опоздали на ' + fmtSec(deadlineInfo.deadlineDeltaSec)}.</div>` : ''}
         ${hasCompression ? '<div class="text-amber-300 text-[11px]">⚡ В этом круге применялось автоужатие. Сравнение с исходным планом показано отдельно.</div>' : ''}
       </div>`;
     }
 
 // Восстановлено из стабильной версии: resetRoutine
 function resetRoutine() {
-      activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0; editingTaskIdx = -1;
+      activeIdx = -1; sessionStatus = 'idle'; savedSec = 0; stepElapsedSec = 0; paused = false; lastOvertimeWarnMin = 0; editingTaskIdx = -1;
       routineStartedAt = 0; forceOriginalRun = false;
       stopActiveRecognition(false);
-      tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; });
+      tasks.forEach(t => { t.compressedSec=null; t.addedSec=0; t.status='pending'; t.plannedSkip=false; });
       document.body.className = 'pb-16'; document.getElementById('summaryCard').classList.add('hidden');
-      disableKeepAlive(); clearSession(); render();
+      disableKeepAlive(); clearSession(); saveSession(); render();
     }
 
 // Восстановлено из стабильной версии: skipStep
@@ -2337,6 +2509,7 @@ function skipStep() {
       vibrate(30);
       stopActiveRecognition(false);
       routineStats.push({
+        id: tasks[activeIdx].id,
         title: tasks[activeIdx].title,
         plannedSec: Math.round((tasks[activeIdx].originalMin ?? tasks[activeIdx].min) * 60),
         liveAdjSec: tasks[activeIdx].addedSec || 0,
@@ -2346,6 +2519,7 @@ function skipStep() {
         endedAt: Date.now(),
         skipped: true
       });
+      tasks[activeIdx].status = 'skipped';
       if (activeIdx + 1 < tasks.length) startStep(activeIdx + 1);
       else finishRoutine();
     }
@@ -2360,7 +2534,8 @@ function startOriginalTemplateFromSummary() {
       if (activeIdx >= 0 && activeIdx < tasks.length && !confirm('Прервать текущий круг и запустить исходный шаблон?')) return;
       tasks = JSON.parse(JSON.stringify(source.tasks)).map(t => {
         const min = Math.max(0.5, Number(t.min) || Number(t.originalMin) || 5);
-        return { title: String(t.title || 'Без названия'), min, originalMin: min, compressedSec: null, addedSec: 0 };
+        const plannedSec = Math.round(min*60);
+        return { ...t, id:t.id || `task-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, title: String(t.title || 'Без названия'), min, originalMin: min, minSec: Number.isFinite(Number(t.minSec)) ? Math.max(30,Math.min(plannedSec,Number(t.minSec))) : Math.max(30,Math.round(plannedSec*0.5)), priority:[1,2,3,4].includes(Number(t.priority))?Number(t.priority):2, required:!!t.required, status:'pending', compressedSec: null, addedSec: 0 };
       });
       activeIdx = -1; savedSec = 0; stepElapsedSec = 0; paused = false;
       routineStats = []; routineStartedAt = 0; forceOriginalRun = false;
@@ -2376,11 +2551,28 @@ function startOriginalTemplateFromSummary() {
 // Восстановлено из стабильной версии: startStep
 function startStep(idx) {
       const nowMs = Date.now();
-      if (idx === 0 && !routineStartedAt) routineStartedAt = nowMs;
-      activeIdx = idx; stepStartMs = nowMs; totalPausedMs = 0; paused = false; stepElapsedSec = 0;
+      if (idx === 0 && !routineStartedAt) {
+        routineStartedAt = nowMs;
+        if (document.getElementById('useDeadline').checked) routineDeadlineAt = getDeadlineDate(new Date(nowMs)).getTime();
+      }
+      if (tasks[idx]?.plannedSkip) {
+        const skippedTask = tasks[idx];
+        routineStats.push({ id:skippedTask.id, title:skippedTask.title, plannedSec:Math.round((skippedTask.originalMin??skippedTask.min)*60), scheduledSec:0, liveAdjSec:0, actualSec:0, skipped:true, plannedAutoSkip:true, startedAt:nowMs, endedAt:nowMs });
+        skippedTask.status = 'skipped'; skippedTask.plannedSkip = false;
+        if (idx + 1 < tasks.length) { startStep(idx + 1); return; }
+        finishRoutine(); return;
+      }
+      activeIdx = idx; sessionStatus = 'running'; stepStartMs = nowMs; totalPausedMs = 0; paused = false; stepElapsedSec = 0;
+      tasks[idx].status = 'running';
       warned50 = false; warned20 = false; warnedZero = false; lastOvertimeWarnMin = 0;
       let cInfo = (!forceOriginalRun && document.getElementById('useDeadline').checked && document.getElementById('autoCompressToggle').checked)
         ? compressToDeadline(false, idx) : { compressed:false, lateMin:0 };
+      if (tasks[idx]?.plannedSkip) {
+        const skippedTask = tasks[idx]; skippedTask.plannedSkip = false; skippedTask.status = 'skipped';
+        routineStats.push({ id:skippedTask.id, title:skippedTask.title, plannedSec:Math.round((skippedTask.originalMin??skippedTask.min)*60), scheduledSec:0, liveAdjSec:0, actualSec:0, skipped:true, plannedAutoSkip:true, startedAt:nowMs, endedAt:nowMs });
+        if (idx + 1 < tasks.length) { startStep(idx + 1); return; }
+        finishRoutine(); return;
+      }
       stepDurationSec = getStepTargetSec(idx);
       enableKeepAlive(); saveSession(); playBeep(700,0.1,1);
 
@@ -2404,8 +2596,10 @@ function togglePause() {
       if (currentMode === 'factory') {
         if (!factState.active) return;
         factState.paused = !factState.paused;
-        if (factState.paused) factState.pauseStartedAt = Date.now();
-        else {
+        if (factState.paused) {
+          factState.pauseStartedAt = Date.now();
+          factState.currentUnitElapsedSec = Math.max(0, Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0))/1000));
+        } else {
           factState.totalPausedMs = (factState.totalPausedMs || 0) + (Date.now() - (factState.pauseStartedAt || Date.now()));
           factState.pauseStartedAt = 0;
         }
@@ -2417,8 +2611,8 @@ function togglePause() {
       }
       if (activeIdx < 0 || activeIdx >= tasks.length) return;
       paused = !paused;
-      if (paused) { pauseStartMs = Date.now(); speakRu('Пауза'); showToast('⏸ Пауза'); }
-      else { totalPausedMs += (Date.now() - pauseStartMs); speakRu('Продолжаем'); showToast('▶ Продолжаем'); }
+      if (paused) { pauseStartMs = Date.now(); sessionStatus = 'paused'; stepElapsedSec = Math.max(0, Math.floor((pauseStartMs - stepStartMs - totalPausedMs) / 1000)); speakRu('Пауза'); showToast('⏸ Пауза'); }
+      else { totalPausedMs += (Date.now() - pauseStartMs); pauseStartMs = 0; sessionStatus = 'running'; speakRu('Продолжаем'); showToast('▶ Продолжаем'); }
       saveSession(); render();
     }
 
@@ -2429,111 +2623,187 @@ function toggleSuggestion(idx, checked) {
 
     // --- ЛОГИКА ЦЕХА: изолированное состояние, не затрагивает таймер утра ---
     function setCalcMode(mode) {
+      // Совместимость со старыми сохранёнными интерфейсами: в новой таблице оба значения доступны одновременно.
       calcMode = mode === 'perUnit' ? 'perUnit' : 'total';
-      document.getElementById('subTabTotal').classList.toggle('active', calcMode === 'total');
-      document.getElementById('subTabPerUnit').classList.toggle('active', calcMode === 'perUnit');
-      document.getElementById('factTimeLabel').textContent = calcMode === 'total' ? 'Общее время:' : 'Время на 1 шт:';
-      document.getElementById('factTimeUnit').textContent = 'мин';
       updateFactCalc();
     }
 
-    function updateFactCalc() {
-      const val = Number(document.getElementById('factTimeVal')?.value);
-      const units = Number(document.getElementById('factTotalUnits')?.value);
-      const out = document.getElementById('factCalcResult');
-      if (!out) return;
-      if (!Number.isFinite(val) || val <= 0 || !Number.isInteger(units) || units < 1) { out.textContent = ''; return; }
-      const perUnit = calcMode === 'total' ? val * 60 / units : val * 60;
-      const total = calcMode === 'total' ? val : val * units;
-      out.textContent = `Норма: ${fmtSec(Math.round(perUnit))} на 1 шт · Всего: ${total.toFixed(1)} мин`;
+    function factoryPlanRows() {
+      return [...document.querySelectorAll('#factoryPlanBody tr[data-factory-row]')];
     }
-
-    function persistFactory() {
-      try { localStorage.setItem('m_factory_session', JSON.stringify(factState)); }
-      catch(e) { showToast('⚠️ Не удалось сохранить партию: память браузера заполнена'); }
-    }
-
-    function startFactoryBatch() {
-      const name = document.getElementById('factOpName').value.trim();
-      const val = Number(document.getElementById('factTimeVal').value);
-      const units = Number(document.getElementById('factTotalUnits').value);
-      const autoNext = document.getElementById('factAutoNext').checked;
-      if (!name || !Number.isFinite(val) || val <= 0 || !Number.isInteger(units) || units < 1 || units > 100000) {
-        showToast('⚠️ Укажите операцию, время и целое количество деталей'); return;
+    function syncFactoryRow(input, source) {
+      const row = input.closest('tr'); if (!row) return;
+      const unitsEl = row.querySelector('[data-field="units"]');
+      const totalEl = row.querySelector('[data-field="total"]');
+      const unitEl = row.querySelector('[data-field="unit"]');
+      const units = Math.max(1, Math.floor(Number(unitsEl.value) || 1));
+      if (source === 'units') {
+        const per = Number(unitEl.value) || 0;
+        totalEl.value = per > 0 ? (per * units).toFixed(2) : '';
+      } else if (source === 'total') {
+        const total = Number(totalEl.value) || 0;
+        unitEl.value = total > 0 ? (total / units).toFixed(3) : '';
+      } else if (source === 'unit') {
+        const per = Number(unitEl.value) || 0;
+        totalEl.value = per > 0 ? (per * units).toFixed(2) : '';
       }
-      const unitTargetSec = Math.max(1, Math.round((calcMode === 'total' ? val / units : val) * 60));
-      const totalMin = calcMode === 'total' ? val : val * units;
-      factState = {
-        active: true, savedShift: false, name, totalMin, totalUnits: units, doneUnits: 0,
-        autoNext, startedAt: Date.now(), currentUnitStartMs: Date.now(), currentUnitElapsedSec: 0, unitTargetSec,
-        unitStats: [], paused: false, totalPausedMs: 0, pauseStartedAt: 0
-      };
+      updateFactCalc();
+    }
+    function addFactoryPlanRow(data = {}) {
+      const body = document.getElementById('factoryPlanBody'); if (!body) return;
+      const tr = document.createElement('tr'); tr.dataset.factoryRow = '1'; tr.className = 'border-t border-slate-800';
+      const units = Math.max(1, Number(data.units) || 10);
+      const unit = Number(data.unitMin) || 1;
+      const total = Number(data.totalMin) || unit * units;
+      tr.innerHTML = `<td class="p-1"><input data-field="name" aria-label="Название операции" value="${esc(data.name || 'Новая операция')}" class="w-full min-w-[120px] bg-slate-950 border border-slate-700 rounded px-2 py-2 text-white" /></td>
+        <td class="p-1"><input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="${units}" oninput="syncFactoryRow(this,'units')" class="w-16 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+        <td class="p-1"><input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="${total.toFixed(2)}" oninput="syncFactoryRow(this,'total')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+        <td class="p-1"><input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="${unit.toFixed(3)}" oninput="syncFactoryRow(this,'unit')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
+        <td data-field="sum" class="p-2 text-center text-emerald-300 font-bold tabular-nums">${(total).toFixed(1)} мин</td>
+        <td class="p-1"><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-2 text-rose-300">✕</button></td>`;
+      body.appendChild(tr); updateFactCalc();
+    }
+    function removeFactoryPlanRow(button) {
+      const rows = factoryPlanRows();
+      if (rows.length <= 1) { showToast('Оставь хотя бы одну операцию'); return; }
+      button.closest('tr')?.remove(); updateFactCalc();
+    }
+    function updateFactCalc() {
+      const out = document.getElementById('factCalcResult'); if (!out) return;
+      let unitsTotal = 0, secondsTotal = 0, valid = 0;
+      factoryPlanRows().forEach(row => {
+        const name = row.querySelector('[data-field="name"]')?.value.trim();
+        const units = Math.floor(Number(row.querySelector('[data-field="units"]')?.value));
+        const total = Number(row.querySelector('[data-field="total"]')?.value);
+        const unit = Number(row.querySelector('[data-field="unit"]')?.value);
+        const sec = Math.round(unit * 60);
+        if (name && units > 0 && Number.isFinite(total) && total > 0 && sec > 0) {
+          valid++; unitsTotal += units; secondsTotal += Math.round(total * 60);
+          row.querySelector('[data-field="sum"]').textContent = `${(total).toFixed(1)} мин`;
+        } else row.querySelector('[data-field="sum"]').textContent = '—';
+      });
+      out.textContent = valid ? `Итого по карте: ${unitsTotal} шт · ${fmtSec(secondsTotal)} · ${valid} операций` : 'Добавь название, количество и время для операции';
+    }
+    function readFactoryPlan() {
+      return factoryPlanRows().map(row => {
+        const name = row.querySelector('[data-field="name"]').value.trim();
+        const units = Math.floor(Number(row.querySelector('[data-field="units"]').value));
+        const totalMin = Number(row.querySelector('[data-field="total"]').value);
+        const unitMin = Number(row.querySelector('[data-field="unit"]').value);
+        return { name, units, totalMin, unitTargetSec:Math.max(1,Math.round(unitMin*60)), doneUnits:0, unitStats:[] };
+      }).filter(x => x.name && Number.isInteger(x.units) && x.units > 0 && Number.isFinite(x.totalMin) && x.totalMin > 0 && x.unitTargetSec > 0);
+    }
+    function startFactoryBatch() {
+      const operations = readFactoryPlan();
+      if (!operations.length || operations.length !== factoryPlanRows().length || operations.some(x => x.units > 100000)) {
+        showToast('⚠️ Проверь названия, количество и время во всех строках'); return;
+      }
+      const now = Date.now();
+      const totalUnits = operations.reduce((a,x)=>a+x.units,0);
+      const totalMin = operations.reduce((a,x)=>a+x.totalMin,0);
+      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:document.getElementById('factAutoNext').checked, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
       document.getElementById('factorySummaryCard').classList.add('hidden');
-      persistFactory();
-      setupMediaSessionHandlers();
-      playBeep(700, 0.1, 1);
-      renderFactoryUI();
+      factWarned20 = false; factWarnedZero = false;
+      persistFactory(); setupMediaSessionHandlers(); playBeep(700,0.09,1); renderFactoryUI();
+      showToast(`🏭 Партия запущена: ${totalUnits} шт., ${operations.length} операций`);
     }
 
     function handleFactoryMainBtn() {
       if (!factState.active || factState.paused) return;
       const now = Date.now();
+      const op = factState.operations?.[factState.operationIndex || 0];
+      if (!op) { finishFactoryBatchEarly(true); return; }
       const elapsed = Math.max(1, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
-      factState.unitStats = Array.isArray(factState.unitStats) ? factState.unitStats : [];
-      factState.unitStats.push({ unit: factState.doneUnits + 1, plannedSec: factState.unitTargetSec, actualSec: elapsed, endedAt: now });
-      factState.doneUnits++;
-      if (factState.doneUnits >= factState.totalUnits) {
-        finishFactoryBatchEarly(true);
-        return;
+      const unitNo = (op.doneUnits || 0) + 1;
+      const stat = { operation:op.name, unit:unitNo, plannedSec:op.unitTargetSec, actualSec:elapsed, startedAt:factState.currentUnitStartMs, endedAt:now };
+      op.unitStats = Array.isArray(op.unitStats) ? op.unitStats : []; op.unitStats.push(stat);
+      op.doneUnits = unitNo; op.goodUnits = (op.goodUnits || 0) + 1;
+      factState.unitStats.push(stat); factState.doneUnits++; factState.goodUnits = (factState.goodUnits || 0) + 1;
+      if (op.doneUnits >= op.units) {
+        factState.operationIndex = (factState.operationIndex || 0) + 1;
+        const nextOp = factState.operations[factState.operationIndex];
+        if (!nextOp) { finishFactoryBatchEarly(true); return; }
+        factState.unitTargetSec = nextOp.unitTargetSec;
       }
-      factState.currentUnitStartMs = now;
-      factState.currentUnitElapsedSec = 0;
-      factState.totalPausedMs = 0;
-      factState.pauseStartedAt = 0;
-      factState.paused = false;
-      factWarned20 = false; factWarnedZero = false;
-      persistFactory();
-      playBeep(720, 0.08, 1);
-      renderFactoryUI();
+      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.paused = false;
+      factWarned20 = false; factWarnedZero = false; persistFactory(); playBeep(720,0.07,1); renderFactoryUI();
+    }
+
+    function skipFactoryUnit() {
+      if (!factState.active || factState.paused) return;
+      const now = Date.now();
+      const op = factState.operations?.[factState.operationIndex || 0];
+      if (!op) return;
+      const elapsed = Math.max(0, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0))/1000));
+      const unitNo = (op.doneUnits || 0) + 1;
+      const stat = { operation:op.name, unit:unitNo, plannedSec:op.unitTargetSec, actualSec:elapsed, startedAt:factState.currentUnitStartMs, endedAt:now, skipped:true, reason:'Брак / пропуск' };
+      op.unitStats = Array.isArray(op.unitStats) ? op.unitStats : []; op.unitStats.push(stat); op.doneUnits = unitNo; op.skippedUnits = (op.skippedUnits || 0) + 1;
+      factState.unitStats.push(stat); factState.doneUnits++; factState.skippedUnits = (factState.skippedUnits || 0) + 1;
+      if (op.doneUnits >= op.units) {
+        factState.operationIndex = (factState.operationIndex || 0) + 1;
+        const nextOp = factState.operations[factState.operationIndex];
+        if (!nextOp) { finishFactoryBatchEarly(true); return; }
+        factState.unitTargetSec = nextOp.unitTargetSec;
+      }
+      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0;
+      factWarned20 = false; factWarnedZero = false; persistFactory(); vibrate([50,35,50]); renderFactoryUI();
+      showToast(`✕ Деталь ${unitNo} в операции «${op.name}» пропущена`);
     }
 
     function finishFactoryBatchEarly(completedAll = false) {
-      if (!factState.active) return;
+      if (!factState.active && !factState.savedShift) return;
       const now = Date.now();
       const history = safeJsonParse(localStorage.getItem('m_factory_history'), []);
+      const currentElapsed = completedAll ? 0 : (factState.active && !factState.paused
+        ? Math.max(0, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0))/1000))
+        : Math.max(0, Number(factState.currentUnitElapsedSec) || 0));
       const record = {
         name: factState.name, startedAt: factState.startedAt, endedAt: now,
-        totalUnits: factState.totalUnits, doneUnits: factState.doneUnits,
-        plannedTotalSec: Math.round((factState.totalMin || 0) * 60),
-        actualTotalSec: (factState.unitStats || []).reduce((sum, x) => sum + (x.actualSec || 0), 0),
-        unitStats: factState.unitStats || [], completedAll: !!completedAll
+        totalUnits: factState.totalUnits, doneUnits: factState.goodUnits || 0, processedUnits:factState.doneUnits || 0, skippedUnits:factState.skippedUnits || 0,
+        plannedTotalSec: Math.round((factState.totalMin || 0) * 60), inProgressSec:currentElapsed,
+        actualTotalSec: (factState.unitStats || []).reduce((sum, x) => sum + (x.actualSec || 0), 0) + currentElapsed,
+        operations: factState.operations || [], unitStats: factState.unitStats || [], completedAll: !!completedAll
       };
       history.unshift(record);
       try { localStorage.setItem('m_factory_history', JSON.stringify(history.slice(0, 100))); } catch(e) {}
+      journal.push({ date:now, startedAt:record.startedAt, endedAt:now, mode:'factory', templateName:record.name, totalPlan:record.plannedTotalSec, totalOriginalPlan:record.plannedTotalSec, totalActual:record.actualTotalSec, totalWorkActual:(record.unitStats||[]).reduce((sum,x)=>sum+(!x.skipped?(Number(x.actualSec)||0):0),0), totalSkippedTimeSec:(record.unitStats||[]).reduce((sum,x)=>sum+(x.skipped?(Number(x.actualSec)||0):0),0), totalWallSec:Math.max(0,Math.round((now-record.startedAt)/1000)), unitsPlan:record.totalUnits, unitsDone:record.doneUnits, stats:(record.unitStats||[]).map(x=>({title:`${x.operation} · шт. ${x.unit}`,plannedSec:x.plannedSec,scheduledSec:x.plannedSec,actualSec:x.actualSec,startedAt:x.startedAt,endedAt:x.endedAt,skipped:!!x.skipped})).concat(record.inProgressSec>0?[{title:'Незавершённая деталь',plannedSec:0,scheduledSec:0,actualSec:record.inProgressSec,skipped:true}]:[]) });
+      if (journal.length > 150) journal = journal.slice(-150);
+      try { localStorage.setItem('m_journal', JSON.stringify(journal)); } catch(e) {}
       factState.active = false; factState.paused = false; factState.savedShift = false;
       persistFactory();
       playBeep(completedAll ? 880 : 620, 0.12, completedAll ? 3 : 2);
       vibrate([100, 50, 100]);
-      const avg = record.doneUnits ? Math.round(record.actualTotalSec / record.doneUnits) : 0;
+      const goodActual = (record.unitStats || []).reduce((sum,x) => sum + (!x.skipped ? (Number(x.actualSec)||0) : 0), 0);
+      const avg = record.doneUnits ? Math.round(goodActual / record.doneUnits) : 0;
+      const totalDiff = record.actualTotalSec - record.plannedTotalSec;
       document.getElementById('factorySummaryContent').innerHTML =
         `<div><b>Операция:</b> ${esc(record.name)}</div>` +
-        `<div><b>Готово:</b> ${record.doneUnits} из ${record.totalUnits} шт.</div>` +
-        `<div><b>Среднее на штуку:</b> ${fmtSec(avg)}</div>` +
+        `<div><b>Готово:</b> ${record.doneUnits} из ${record.totalUnits} шт.</div><div><b>Брак / пропуск:</b> ${record.skippedUnits} шт.</div><div><b>Обработано:</b> ${record.processedUnits} шт.</div>` +
+        `<div><b>Среднее на годную штуку:</b> ${fmtSec(avg)}</div>` +
+        `<div><b>План / факт партии:</b> ${fmtSec(record.plannedTotalSec)} / ${fmtSec(record.actualTotalSec)} · <b>${fmtSignedDiff(totalDiff)}</b></div>` +
         `<div><b>Статус:</b> ${completedAll ? 'Партия завершена' : 'Закрыта досрочно'}</div>`;
       document.getElementById('factorySummaryCard').classList.remove('hidden');
       showToast(completedAll ? '🏁 Партия полностью завершена' : '🏁 Партия закрыта досрочно');
       renderFactoryUI();
     }
 
+    function setFactoryAutoNext(enabled) {
+      factState.autoNext = !!enabled;
+      persistFactory();
+      showToast(factState.autoNext ? 'Автопереход включён' : 'Ручное подтверждение включено');
+    }
+
     function addFactoryUnitMinute() {
       if (!factState.active || factState.paused) return;
       factState.unitTargetSec += 60;
+      factState.totalMin = (Number(factState.totalMin) || 0) + 1;
+      const op = factState.operations?.[factState.operationIndex || 0]; if (op) op.totalMin = (Number(op.totalMin) || 0) + 1;
       factWarned20 = false; factWarnedZero = false;
       persistFactory(); renderFactoryUI(); showToast('＋ К норме добавлена 1 минута');
     }
 
     function confirmFactoryReset() {
-      if (!factState.active) return;
+      if (!factState.active && !factState.savedShift) return;
       if (!confirm('Сбросить текущую партию? Уже учтённые детали останутся в истории только после закрытия партии.')) return;
       factState.active = false; factState.paused = false; persistFactory();
       factState = { active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
@@ -2566,13 +2836,15 @@ function toggleSuggestion(idx, checked) {
       const summary = document.getElementById('factSavedShiftBadge');
       if (factState.active) {
         setup.classList.add('hidden'); active.classList.remove('hidden');
-        document.getElementById('factActiveName').textContent = factState.name;
-        document.getElementById('factActiveCount').textContent = `${factState.doneUnits} / ${factState.totalUnits} шт`;
+        const currentOp = factState.operations?.[factState.operationIndex || 0];
+        document.getElementById('factActiveName').textContent = currentOp ? currentOp.name : factState.name;
+        document.getElementById('factActiveCount').textContent = `${factState.goodUnits || 0} готово · ${factState.skippedUnits || 0} пропуск · ${factState.totalUnits} всего`;
         document.getElementById('factBatchProgress').style.width = `${Math.min(100, factState.doneUnits / Math.max(1, factState.totalUnits) * 100)}%`;
-        document.getElementById('factUnitNormInfo').textContent = `Норма: ${fmtSec(factState.unitTargetSec)} · Осталось: ${factState.totalUnits - factState.doneUnits} шт`;
-        document.getElementById('factStepCounter').textContent = `Деталь ${factState.doneUnits + 1} из ${factState.totalUnits}${factState.paused ? ' · ПАУЗА' : ''}`;
-        document.getElementById('factCurrentTaskName').textContent = factState.name;
+        document.getElementById('factUnitNormInfo').textContent = `Операция ${Math.min((factState.operationIndex||0)+1,(factState.operations||[]).length)} из ${(factState.operations||[]).length} · Норма: ${fmtSec(factState.unitTargetSec)} · Осталось: ${factState.totalUnits - factState.doneUnits} шт`;
+        document.getElementById('factStepCounter').textContent = `${currentOp?.name || factState.name} · Деталь ${(currentOp?.doneUnits||0)+1} из ${currentOp?.units || factState.totalUnits}${factState.paused ? ' · ПАУЗА' : ''}`;
+        document.getElementById('factCurrentTaskName').textContent = currentOp?.name || factState.name;
         document.getElementById('factPauseBtn').textContent = factState.paused ? '▶' : '⏸';
+        const autoNextLive = document.getElementById('factAutoNextLive'); if (autoNextLive) autoNextLive.checked = !!factState.autoNext;
         const elapsed = factState.paused
           ? Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000)
           : Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
@@ -2673,10 +2945,25 @@ function toggleSuggestion(idx, checked) {
     }, 500);
 
     function exportData() {
-      const data = { templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null), factorySession: factState, factoryHistory: safeJsonParse(localStorage.getItem('m_factory_history'), []) };
+      const data = { formatVersion:2, exportedAt:Date.now(), templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null), factorySession: factState, factoryHistory: safeJsonParse(localStorage.getItem('m_factory_history'), []), settings:{ deadlineTime:localStorage.getItem('m_deadline_time'), deadlineDate:localStorage.getItem('m_deadline_date'), exitBufferMin:localStorage.getItem('m_exit_buffer_min'), autoCompress:localStorage.getItem('m_auto_compress'), useDeadline:localStorage.getItem('m_use_deadline'), silentMode:localStorage.getItem('m_silent_mode'), autoVoiceWindow:localStorage.getItem('m_auto_voice_win'), notify:localStorage.getItem('m_notify'), autoSkipOptional:localStorage.getItem('m_auto_skip_optional'), reduceMotion:localStorage.getItem('m_reduce_motion') } };
       const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
+    }
+
+    function restoreAutoBackup() {
+      const raw = localStorage.getItem('m_auto_recovery_backup');
+      const snap = safeJsonParse(raw, null);
+      if (!snap || !snap.values) { showToast('Автоматический бэкап пока не найден'); return; }
+      if (!confirm(`Восстановить данные из авто-бэкапа от ${new Date(snap.createdAt).toLocaleString('ru-RU')}? Текущие данные будут заменены.`)) return;
+      try {
+        const current = {};
+        Object.keys(snap.values).forEach(k => { current[k] = localStorage.getItem(k); });
+        localStorage.setItem('m_backup_before_auto_restore', JSON.stringify({ createdAt:Date.now(), values:current }));
+        const restoreKeys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional'];
+        restoreKeys.forEach(k => { if (Object.prototype.hasOwnProperty.call(snap.values,k)) localStorage.setItem(k,snap.values[k]); else localStorage.removeItem(k); });
+        location.reload();
+      } catch(e) { alert('Не удалось восстановить бэкап: хранилище недоступно или переполнено.'); }
     }
 
     function importData(e) {
@@ -2692,11 +2979,18 @@ function toggleSuggestion(idx, checked) {
           const okJournal = data.journal === undefined || (Array.isArray(data.journal) &&
             data.journal.every(j => j && Number.isFinite(Number(j.date || j.endedAt)) &&
               (j.stats === undefined || Array.isArray(j.stats))));
-          const okFactory = data.factorySession === undefined || (data.factorySession && typeof data.factorySession === 'object' &&
+          const okSession = data.session === undefined || data.session === null || (data.session && typeof data.session === 'object' &&
+            Array.isArray(data.session.tasks) && Number.isInteger(Number(data.session.activeIdx)) && Number(data.session.activeIdx) >= -1 && Number(data.session.activeIdx) <= data.session.tasks.length &&
+            data.session.tasks.every(x => x && typeof x.title === 'string' && Number.isFinite(Number(x.min)) && Number(x.min) >= 0.5) &&
+            (data.session.routineStats === undefined || Array.isArray(data.session.routineStats)));
+          const okFactory = data.factorySession === undefined || data.factorySession === null || (data.factorySession && typeof data.factorySession === 'object' &&
             Number.isFinite(Number(data.factorySession.totalUnits || 0)) && Number(data.factorySession.totalUnits || 0) >= 0 &&
             Number.isFinite(Number(data.factorySession.doneUnits || 0)) && Number(data.factorySession.doneUnits || 0) >= 0 &&
-            Array.isArray(data.factorySession.unitStats || []));
-          if (!okTemplates || !okJournal || !okFactory) {
+            Array.isArray(data.factorySession.unitStats || []) &&
+            (data.factorySession.operations === undefined || (Array.isArray(data.factorySession.operations) && data.factorySession.operations.every(op => op && typeof op.name === 'string' && Number.isInteger(Number(op.units)) && Number(op.units) > 0 && Number.isFinite(Number(op.unitTargetSec)) && Number(op.unitTargetSec) > 0))));
+          const okFactoryHistory = data.factoryHistory === undefined || (Array.isArray(data.factoryHistory) && data.factoryHistory.every(x => x && typeof x.name === 'string' && Number.isFinite(Number(x.startedAt)) && Number.isFinite(Number(x.endedAt))));
+          const okSettings = data.settings === undefined || (data.settings && typeof data.settings === 'object' && Object.values(data.settings).every(v => v === null || typeof v === 'string'));
+          if (!okTemplates || !okJournal || !okFactory || !okSession || !okFactoryHistory || !okSettings) {
             alert('Файл не похож на резервную копию — импорт отменён.');
             return;
           }
@@ -2704,22 +2998,31 @@ function toggleSuggestion(idx, checked) {
             templates: safeJsonParse(localStorage.getItem('m_custom_templates'), []),
             journal: safeJsonParse(localStorage.getItem('m_journal'), []),
             session: safeJsonParse(localStorage.getItem('m_active_session'), null),
-            activeTemplateIdx: safeJsonParse(localStorage.getItem('m_active_tpl_idx'), 0)
+            factorySession: safeJsonParse(localStorage.getItem('m_factory_session'), null),
+            factoryHistory: safeJsonParse(localStorage.getItem('m_factory_history'), []),
+            activeTemplateIdx: safeJsonParse(localStorage.getItem('m_active_tpl_idx'), 0),
+            settings: { deadlineTime:localStorage.getItem('m_deadline_time'), deadlineDate:localStorage.getItem('m_deadline_date'), exitBufferMin:localStorage.getItem('m_exit_buffer_min'), autoCompress:localStorage.getItem('m_auto_compress'), useDeadline:localStorage.getItem('m_use_deadline'), silentMode:localStorage.getItem('m_silent_mode'), autoVoiceWindow:localStorage.getItem('m_auto_voice_win'), notify:localStorage.getItem('m_notify'), autoSkipOptional:localStorage.getItem('m_auto_skip_optional'), reduceMotion:localStorage.getItem('m_reduce_motion') }
           };
           localStorage.setItem('m_backup_before_import', JSON.stringify(backup));
           localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
           if (Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
           if (data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
+          else localStorage.removeItem('m_active_session');
           if (data.factorySession && typeof data.factorySession === 'object') localStorage.setItem('m_factory_session', JSON.stringify(data.factorySession));
+          else localStorage.removeItem('m_factory_session');
           if (Array.isArray(data.factoryHistory)) localStorage.setItem('m_factory_history', JSON.stringify(data.factoryHistory));
+          else localStorage.setItem('m_factory_history', '[]');
+          if (data.settings && typeof data.settings === 'object') {
+            const settingKeys = { deadlineTime:'m_deadline_time', deadlineDate:'m_deadline_date', exitBufferMin:'m_exit_buffer_min', autoCompress:'m_auto_compress', useDeadline:'m_use_deadline', silentMode:'m_silent_mode', autoVoiceWindow:'m_auto_voice_win', notify:'m_notify', autoSkipOptional:'m_auto_skip_optional', reduceMotion:'m_reduce_motion' };
+            Object.entries(settingKeys).forEach(([field,key]) => { if (data.settings[field] !== null && data.settings[field] !== undefined) localStorage.setItem(key,data.settings[field]); });
+          }
           alert('Импорт успешен! Страница будет перезагружена.');
           location.reload();
         } catch(err) { alert('Ошибка чтения файла!'); }
       }; reader.readAsText(file);
     }
 
-    document.getElementById('factTimeVal').addEventListener('input', updateFactCalc);
-    document.getElementById('factTotalUnits').addEventListener('input', updateFactCalc);
+    document.getElementById('factoryPlanBody')?.addEventListener('input', updateFactCalc);
 
     try {
       openTemplateConstructor(activeTemplateIdx);
@@ -2728,6 +3031,7 @@ function toggleSuggestion(idx, checked) {
       render();
       switchMode(currentMode === 'factory' ? 'factory' : 'morning');
       renderFactoryUI();
+      updateFactCalc();
     } catch (err) {
       const vs = document.getElementById('voiceStatus');
       if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
