@@ -60,6 +60,20 @@
     .tab-btn.active { background:#1e293b; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,0.25); }
     .calc-subtab { flex:1; padding:6px 0; font-size:11px; font-weight:700; border-radius:8px; background:#0f172a; color:#94a3b8; border:1px solid #334155; cursor:pointer; text-align:center; }
     .calc-subtab.active { background:#0284c7; color:#fff; border-color:#38bdf8; }
+    /* Карточка задачи: смысловой значок и читаемое название, метаданные и действия ниже. */
+    #tasksContainer .task-row { display:flex !important; flex-direction:column; gap:7px; align-items:stretch; border:1px solid rgba(100,116,139,.28); background:rgba(15,23,42,.48); }
+    #tasksContainer .task-main-line { display:flex; align-items:center; gap:9px; min-width:0; }
+    #tasksContainer .task-drag-handle { color:#94a3b8; font-size:15px; cursor:grab; flex:0 0 auto; padding:3px; }
+    #tasksContainer .task-icon { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; flex:0 0 34px; border-radius:10px; background:rgba(51,65,85,.75); font-size:19px; }
+    #tasksContainer .task-title-text { flex:1 1 auto; min-width:0; white-space:normal; overflow-wrap:anywhere; line-height:1.25; font-size:14px; }
+    #tasksContainer .task-meta-line { display:flex; align-items:center; flex-wrap:wrap; gap:6px 9px; padding-left:49px; border-top:1px solid rgba(100,116,139,.2); padding-top:6px; }
+    #tasksContainer .task-priority, #tasksContainer .task-time, #tasksContainer .task-minimum { font-size:11px; color:#cbd5e1; white-space:nowrap; }
+    #tasksContainer .task-actions { display:flex; gap:3px; margin-left:auto; }
+    #tasksContainer .task-actions button { min-width:34px; min-height:34px; border-radius:8px; background:rgba(30,41,59,.9); color:#e2e8f0; font-size:15px; }
+    #tasksContainer .task-actions button:disabled { opacity:.25; }
+    #tasksContainer .task-row.dragging-source .task-icon { background:rgba(14,165,233,.3); }
+    #tasksContainer .task-row.drop-target-active { border-color:#22c55e; }
+    #factoryActivePanel .text-amber-200 { line-height:1.45; }
   </style>
 </head>
 <body class="pb-16">
@@ -336,7 +350,7 @@
           <div class="space-y-2 pt-1 border-t border-slate-800">
             <label class="flex items-center gap-2 font-semibold text-slate-300 text-xs cursor-pointer">
               <input type="checkbox" id="factAutoNext" checked class="w-4 h-4 accent-sky-500 rounded" />
-              <span>Авто-переход по истечении времени на деталь</span>
+              <span>Сигнал по окончании нормы (таймер продолжает считать)</span>
             </label>
           </div>
 
@@ -355,10 +369,9 @@
             <div id="factBatchProgress" class="h-full bg-sky-500 transition-all duration-300" style="width:0%"></div>
           </div>
           <div id="factUnitNormInfo" class="text-xs text-slate-400 tabular-nums"></div>
-          <label class="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2">
-            <input id="factAutoNextLive" type="checkbox" onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500" />
-            Автоматически засчитывать деталь по истечении нормы
-          </label>
+          <div class="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-700/50 rounded-lg px-3 py-2">⏱ По окончании нормы таймер не переключается сам. Он продолжает учитывать фактическое время до твоего нажатия «Готово».</div>
+          <button type="button" onclick="undoFactoryLastCompletion()" id="factUndoBtn" class="w-full py-2 rounded-lg bg-indigo-950 border border-indigo-700 text-indigo-200 text-xs font-extrabold">↩ Отменить последнее «Готово»</button>
+          <div id="factRecentHistory" class="space-y-1"></div>
         </div>
       </div>
 
@@ -641,7 +654,7 @@
       factState.operations = [{ name:factState.name || 'Операция', units:factState.totalUnits || 1, totalMin:factState.totalMin || 1, unitTargetSec:factState.unitTargetSec || 60, doneUnits:factState.doneUnits || 0, unitStats:factState.unitStats || [] }];
       factState.operationIndex = 0;
     }
-    factState.autoNext = false; // Истечение нормы больше не переводит на следующую деталь автоматически.
+    factState.autoNext = false; // Норма никогда не завершает деталь автоматически.
     let factWarned20 = false, factWarnedZero = false;
 
     // ===================== РАБОТА PRO: ИЗДЕЛИЯ, ЗАКАЗЫ, ЕДИНЫЙ ТАЙМЕР =====================
@@ -2318,6 +2331,20 @@
       rowEl.addEventListener('touchcancel', finishTouch);
     }
 
+    function getTaskIcon(title) {
+      const x = String(title || '').toLowerCase();
+      const rules = [
+        [/дых|медитац|дыхани/, '🌬️'], [/вода|кофе|чай|напит/, '🥤'], [/заряд|тренир|спорт|размин/, '💪'],
+        [/душ|умыва|ванн/, '🚿'], [/зуб|гигиен/, '🪥'], [/еда|завтрак|обед|ужин|перекус/, '🍳'],
+        [/одеть|одежд|выйти|дорог|собрат/, '👕'], [/уборк|порядок|помы|чист/, '🧹'],
+        [/работ|задач|проект|план/, '💼'], [/чита|книг|учеб|курс/, '📚'], [/покуп|магазин/, '🛒'],
+        [/звон|позвон|сообщ/, '📞'], [/почт|письм/, '✉️'], [/прогул|ходьб/, '🚶'],
+        [/лекар|таблет|витамин/, '💊'], [/сон|отбой|спать/, '🌙']
+      ];
+      const hit = rules.find(([re]) => re.test(x));
+      return hit ? hit[1] : '📌';
+    }
+
     function renderTasksList() {
       if (dragState.active) return;
       const container = document.getElementById('tasksContainer');
@@ -2353,22 +2380,25 @@
         }
 
         return `
-          <div class="task-row flex justify-between items-center py-2 px-2 text-sm ${isCur?'text-emerald-400 font-extrabold bg-emerald-950/40 rounded-xl':''} ${isDone?'line-through text-slate-500':''}">
-            <div class="flex items-center gap-2 truncate pr-1">
-              <span class="text-slate-400 text-sm cursor-grab px-0.5">⋮⋮</span>
-              <span class="truncate">${i+1}. ${esc(t.title)}</span>
-              <span class="text-[10px] ml-1 flex-shrink-0 ${Number(t.priority||2)>=3?'text-amber-300':'text-slate-500'}">${({4:'КРИТ.',3:'ВЫС.',2:'СРЕД.',1:'НИЗК.'})[Number(t.priority||2)] || 'СРЕД.'}</span>
-              <span class="text-xs ml-1 flex-shrink-0 text-slate-400">${b}</span>
-              <span class="text-[10px] text-slate-500 flex-shrink-0">мин. ${fmtSec(t.minSec ?? Math.max(30,Math.round((t.min||1)*30)))}</span>
-              <span class="drag-badge drag-badge-from ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500 text-slate-950">⇅ Откуда</span>
-              <span class="drag-badge drag-badge-to ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-400 text-slate-950"></span>
+          <div class="task-row py-2 px-2 text-sm rounded-xl ${isCur?'text-emerald-300 font-extrabold bg-emerald-950/40 border-emerald-700':''} ${isDone?'text-slate-500 opacity-75':''}">
+            <div class="task-main-line">
+              <span class="task-drag-handle" title="Зажмите, чтобы перетащить">⋮⋮</span>
+              <span class="task-icon" aria-hidden="true">${getTaskIcon(t.title)}</span>
+              <span class="task-title-text">${i+1}. ${esc(t.title)}</span>
+              <span class="drag-badge drag-badge-from px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-500 text-slate-950">⇅ Откуда</span>
+              <span class="drag-badge drag-badge-to px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-400 text-slate-950">Сюда</span>
             </div>
-            <div class="flex items-center gap-0.5 flex-shrink-0">
-              <button type="button" onclick="moveTask(${i}, ${i-1})" aria-label="Переместить ${esc(t.title)} выше" title="Выше" ${i===0?'disabled':''} class="text-slate-400 disabled:opacity-20 px-1 font-bold row-btn">↑</button>
-              <button type="button" onclick="moveTask(${i}, ${i+1})" aria-label="Переместить ${esc(t.title)} ниже" title="Ниже" ${i===tasks.length-1?'disabled':''} class="text-slate-400 disabled:opacity-20 px-1 font-bold row-btn">↓</button>
-              <button type="button" onclick="toggleLock(${i})" title="Блокировать сжатие" class="${t.locked?'text-amber-400':'text-slate-400 hover:text-slate-300'} px-2 font-bold row-btn">${t.locked?'🔒':'🔓'}</button>
-              <button type="button" onclick="startEditTask(${i})" title="Изменить название и время" class="text-sky-300 hover:text-sky-200 px-2 font-bold row-btn">✎</button>
-              <button type="button" onclick="removeTask(${i})" title="Удалить" class="text-rose-400 hover:text-rose-300 px-2 font-bold row-btn">✕</button>
+            <div class="task-meta-line">
+              <span class="task-priority ${Number(t.priority||2)>=3?'priority-high':''}">${({4:'🔴 Крит.',3:'🟠 Высок.',2:'🟡 Средн.',1:'🟢 Низкий'})[Number(t.priority||2)] || '🟡 Средн.'}</span>
+              <span class="task-time">⏱ ${b}</span>
+              <span class="task-minimum">⚡ ${fmtSec(t.minSec ?? Math.max(30,Math.round((t.min||1)*30)))}</span>
+              <span class="task-actions">
+                <button type="button" onclick="moveTask(${i}, ${i-1})" aria-label="Переместить ${esc(t.title)} выше" title="Переместить выше" ${i===0?'disabled':''} class="row-btn">↑</button>
+                <button type="button" onclick="moveTask(${i}, ${i+1})" aria-label="Переместить ${esc(t.title)} ниже" title="Переместить ниже" ${i===tasks.length-1?'disabled':''} class="row-btn">↓</button>
+                <button type="button" onclick="toggleLock(${i})" aria-label="${t.locked?'Разрешить сжатие':'Запретить сжатие'}" title="${t.locked?'Разрешить сжатие':'Запретить сжатие'}" class="row-btn">${t.locked?'🔒':'🔓'}</button>
+                <button type="button" onclick="startEditTask(${i})" aria-label="Изменить задачу" title="Изменить" class="row-btn">✏️</button>
+                <button type="button" onclick="removeTask(${i})" aria-label="Удалить задачу" title="Удалить" class="row-btn">🗑️</button>
+              </span>
             </div>
           </div>
         `;
@@ -2963,21 +2993,48 @@ function toggleSuggestion(idx, checked) {
       const now = Date.now();
       const totalUnits = operations.reduce((a,x)=>a+x.units,0);
       const totalMin = operations.reduce((a,x)=>a+x.totalMin,0);
-      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:document.getElementById('factAutoNext').checked, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
+      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:false, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
       document.getElementById('factorySummaryCard').classList.add('hidden');
       factWarned20 = false; factWarnedZero = false;
       persistFactory(); setupMediaSessionHandlers(); playBeep(700,0.09,1); renderFactoryUI();
       showToast(`🏭 Партия запущена: ${totalUnits} шт., ${operations.length} операций`);
     }
 
+    function factoryCloneState() {
+      const copy = JSON.parse(JSON.stringify(factState));
+      delete copy.undoLast;
+      return copy;
+    }
+    function undoFactoryLastCompletion() {
+      if (!factState.undoLast) { showToast('Пока нечего отменять'); return; }
+      const restored = JSON.parse(JSON.stringify(factState.undoLast));
+      restored.undoLast = null;
+      factState = restored; factWarned20 = false; factWarnedZero = false;
+      persistFactory(); renderFactoryUI();
+      showToast('↩ Последнее завершение отменено. Таймер возвращён к этой детали.');
+    }
+    function editFactoryStat(index) {
+      const stat = factState.unitStats?.[index]; if (!stat) return;
+      const current = Math.max(0, Number(stat.actualSec)||0);
+      const answer = prompt(`Исправить фактическое время: ${stat.operation}, деталь ${stat.unit}.\nВведи новое время в минутах (например, 3.5):`, (current/60).toFixed(2));
+      if (answer === null) return;
+      const minutes = Number(String(answer).replace(',', '.'));
+      if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) { showToast('Введи корректное время от 0 до 1440 минут'); return; }
+      stat.actualSec = Math.round(minutes*60); stat.correctedAt = Date.now(); stat.corrected = true;
+      const op = factState.operations?.find(x => (x.unitStats||[]).some(y => y === stat || (y.operation===stat.operation && y.unit===stat.unit && y.endedAt===stat.endedAt)));
+      if (op) { const match=(op.unitStats||[]).find(y=>y.operation===stat.operation&&y.unit===stat.unit&&y.endedAt===stat.endedAt); if(match){match.actualSec=stat.actualSec;match.corrected=true;match.correctedAt=stat.correctedAt;} }
+      persistFactory(); renderFactoryUI(); showToast('Время исправлено и сохранено');
+    }
     function handleFactoryMainBtn() {
       if (!factState.active || factState.paused) return;
       const now = Date.now();
       const op = factState.operations?.[factState.operationIndex || 0];
       if (!op) { finishFactoryBatchEarly(true); return; }
+      const beforeCompletion = factoryCloneState();
       const elapsed = Math.max(1, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
       const unitNo = (op.doneUnits || 0) + 1;
-      const stat = { operation:op.name, unit:unitNo, plannedSec:op.unitTargetSec, actualSec:elapsed, startedAt:factState.currentUnitStartMs, endedAt:now };
+      const stat = { operation:op.name, unit:unitNo, plannedSec:op.unitTargetSec, actualSec:elapsed, startedAt:factState.currentUnitStartMs, endedAt:now, suspicious: elapsed > Math.max((op.unitTargetSec||0)*2, (op.unitTargetSec||0)+300) };
+      factState.undoLast = beforeCompletion;
       op.unitStats = Array.isArray(op.unitStats) ? op.unitStats : []; op.unitStats.push(stat);
       op.doneUnits = unitNo; op.goodUnits = (op.goodUnits || 0) + 1;
       factState.unitStats.push(stat); factState.doneUnits++; factState.goodUnits = (factState.goodUnits || 0) + 1;
@@ -2987,7 +3044,7 @@ function toggleSuggestion(idx, checked) {
         if (!nextOp) { finishFactoryBatchEarly(true); return; }
         factState.unitTargetSec = nextOp.unitTargetSec;
       }
-      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.paused = false;
+      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.paused = false; factState.overrunReminderShown=false;
       factWarned20 = false; factWarnedZero = false; persistFactory(); playBeep(720,0.07,1); renderFactoryUI();
     }
 
@@ -3007,7 +3064,7 @@ function toggleSuggestion(idx, checked) {
         if (!nextOp) { finishFactoryBatchEarly(true); return; }
         factState.unitTargetSec = nextOp.unitTargetSec;
       }
-      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0;
+      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.overrunReminderShown=false;
       factWarned20 = false; factWarnedZero = false; persistFactory(); vibrate([50,35,50]); renderFactoryUI();
       showToast(`✕ Деталь ${unitNo} в операции «${op.name}» пропущена`);
     }
@@ -3108,7 +3165,10 @@ function toggleSuggestion(idx, checked) {
         document.getElementById('factPauseBtn').textContent = factState.paused ? '▶' : '⏸';
         const factMain=document.getElementById('factMainBtn'); const factTitle=document.getElementById('factMainBtnTitle'); const factSub=document.getElementById('factMainBtnSub');
         if(factMain&&factTitle){factTitle.textContent=factState.paused?'▶ ПРОДОЛЖИТЬ':'✓ ШТУКА ГОТОВА';factSub.textContent=factState.paused?'Продолжить текущую деталь':'Подтвердить готовность текущей детали';factMain.onclick=factState.paused?togglePause:handleFactoryMainBtn;}
-        const autoNextLive = document.getElementById('factAutoNextLive'); if (autoNextLive) autoNextLive.checked = !!factState.autoNext;
+        const autoNextLive = document.getElementById('factAutoNextLive'); if (autoNextLive) autoNextLive.checked = false;
+        const undoBtn=document.getElementById('factUndoBtn'); if(undoBtn) undoBtn.disabled=!factState.undoLast;
+        const recent=document.getElementById('factRecentHistory');
+        if(recent){const recentStats=(factState.unitStats||[]).slice(-5).reverse();recent.innerHTML=recentStats.length?'<div class="text-[10px] text-slate-400 font-bold pt-1">Последние завершённые детали · нажми, чтобы исправить время</div>'+recentStats.map(st=>{const ix=factState.unitStats.indexOf(st);return `<button type="button" onclick="editFactoryStat(${ix})" class="w-full text-left text-[11px] bg-slate-900/70 rounded-lg px-2.5 py-2 flex justify-between gap-2"><span>${esc(st.operation)} · №${st.unit}${st.suspicious?' · ⚠ проверь время':''}</span><b class="tabular-nums ${st.corrected?'text-sky-300':'text-slate-200'}">${fmtSec(st.actualSec)} ✎</b></button>`}).join(''):'<div class="text-[10px] text-slate-500">Завершённые детали появятся здесь. Их время можно будет исправить.</div>'; }
         const elapsed = factState.paused
           ? Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000)
           : Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
