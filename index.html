@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
-  <title>Утренний Темп-Будильник PRO+</title>
+  <title>Утренний Темп PRO+ · Работа и утро</title>
 
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121824">
@@ -68,10 +68,11 @@
 
   <div class="max-w-lg mx-auto space-y-3">
 
-    <!-- ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМОВ УТРО / ЦЕХ -->
+    <!-- ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМОВ: УТРО / ЦЕХ / РАБОТА -->
     <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-1.5 shadow-xl flex gap-1">
       <button type="button" id="tabMorning" onclick="switchMode('morning')" class="tab-btn active">🌅 Утро (Цепочка)</button>
-      <button type="button" id="tabFactory" onclick="switchMode('factory')" class="tab-btn">🏭 Цех (Партия)</button>
+      <button type="button" id="tabFactory" onclick="switchMode('factory')" class="tab-btn">🏭 Цех</button>
+      <button type="button" id="tabWork" onclick="switchMode('work')" class="tab-btn">🧵 Работа PRO</button>
     </div>
 
     <!-- КОНТЕЙНЕР: УТРО (ИСХОДНЫЙ КОД БЕЗ ИЗМЕНЕНИЙ) -->
@@ -320,22 +321,14 @@
               <div class="text-xs font-extrabold text-slate-200">Технологическая карта партии</div>
               <button type="button" onclick="addFactoryPlanRow()" class="px-3 py-1.5 rounded-lg bg-sky-700 text-white text-xs font-bold">＋ Операция</button>
             </div>
-            <div class="overflow-x-auto rounded-xl border border-slate-700">
-              <table class="w-full min-w-[560px] text-[11px]">
-                <thead class="bg-slate-900 text-slate-400"><tr>
-                  <th class="p-2 text-left">Операция / узел</th><th class="p-2">Кол-во</th><th class="p-2">Общее время, мин</th><th class="p-2">На 1 шт, мин</th><th class="p-2">Итого</th><th></th>
-                </tr></thead>
-                <tbody id="factoryPlanBody">
-                  <tr class="border-t border-slate-800" data-factory-row>
-                    <td class="p-1"><input data-field="name" aria-label="Название операции" value="Основная операция" class="w-full min-w-[120px] bg-slate-950 border border-slate-700 rounded px-2 py-2 text-white" /></td>
-                    <td class="p-1"><input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="10" oninput="syncFactoryRow(this,'units')" class="w-16 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-                    <td class="p-1"><input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="30" oninput="syncFactoryRow(this,'total')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-                    <td class="p-1"><input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="3" oninput="syncFactoryRow(this,'unit')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-                    <td data-field="sum" class="p-2 text-center text-emerald-300 font-bold tabular-nums">30 мин</td>
-                    <td class="p-1"><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-2 text-rose-300">✕</button></td>
-                  </tr>
-                </tbody>
-              </table>
+            <div id="factoryPlanBody" class="space-y-2">
+              <div class="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-2" data-factory-row>
+                <div class="flex items-center justify-between gap-2"><label class="text-[10px] text-slate-400">Операция / узел</label><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-1 text-rose-300">✕ Удалить</button></div>
+                <input data-field="name" aria-label="Название операции" value="Основная операция" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm" />
+                <div class="grid grid-cols-2 gap-2"><label class="text-[10px] text-slate-400">Количество деталей<input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="10" oninput="syncFactoryRow(this,'units')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label><label class="text-[10px] text-slate-400">Общее время, мин<input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="30" oninput="syncFactoryRow(this,'total')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label></div>
+                <label class="block text-[10px] text-slate-400">Время на 1 деталь, мин<input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="3" oninput="syncFactoryRow(this,'unit')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label>
+                <div data-field="sum" class="text-xs text-emerald-300 font-bold tabular-nums">Итого: 30 мин</div>
+              </div>
             </div>
             <div id="factCalcResult" class="text-xs font-bold text-sky-300" aria-live="polite">Всего: 10 шт · 30 мин</div>
             <p class="text-[10px] text-slate-500">Меняй общее время или норму на штуку — второе значение пересчитается автоматически. Можно добавить несколько операций в одну партию.</p>
@@ -363,7 +356,7 @@
           </div>
           <div id="factUnitNormInfo" class="text-xs text-slate-400 tabular-nums"></div>
           <label class="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2">
-            <input id="factAutoNextLive" type="checkbox" checked onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500" />
+            <input id="factAutoNextLive" type="checkbox" onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500" />
             Автоматически засчитывать деталь по истечении нормы
           </label>
         </div>
@@ -414,6 +407,59 @@
       </div>
     </div> <!-- КОНЕЦ БЛОКА ЦЕХА -->
 
+    <!-- НОВЫЙ МОДУЛЬ: РАБОТА PRO -->
+    <div id="modeWork" class="hidden space-y-3">
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between gap-2"><div><div class="text-lg font-black">🧵 Работа PRO</div><div class="text-xs text-slate-400">Изделия · заказы · операции · заработок</div></div><span class="text-[10px] px-2 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700">Один таймер</span></div>
+        <div class="text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-xl p-3">Шаблон изделия хранит технологическую карту и расценки. Каждый новый заказ получает собственную копию норм и расценок — изменения шаблона не переписывают старые заказы.</div>
+      </section>
+
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
+        <div class="font-extrabold text-white">＋ Создать шаблон изделия или работы</div>
+        <label class="block text-xs text-slate-400">Название изделия / услуги<input id="workTplName" maxlength="80" placeholder="Например, Куртка" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-3 text-white text-sm" /></label>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="text-xs text-slate-400">Модель оплаты<select id="workTplPayMode" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-2.5 text-white"><option value="product">За изделие</option><option value="operation">За операции</option><option value="mixed">Смешанная</option></select></label>
+          <label class="text-xs text-slate-400">Цена изделия<input id="workTplPrice" type="number" min="0" step="0.01" value="0" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-2.5 text-white" /></label>
+        </div>
+        <label class="block text-xs text-slate-400">Валюта<select id="workTplCurrency" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-2.5 text-white"><option value="₽">Рубль (₽)</option><option value="€">Евро (€)</option><option value="$">Доллар ($)</option><option value="£">Фунт (£)</option></select></label>
+        <div class="flex items-center justify-between"><span class="text-xs font-bold text-slate-300">Операции</span><button onclick="addWorkTemplateOperation()" class="px-3 py-2 rounded-lg bg-sky-700 text-white text-xs font-bold">＋ Добавить</button></div>
+        <div id="workTplOps" class="space-y-2">
+          <div class="work-op-edit grid grid-cols-12 gap-1.5 bg-slate-900/70 p-2 rounded-xl" data-op-row><input data-op-name class="col-span-5 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white" placeholder="Операция" value="Основная операция"><input data-op-min type="number" min="0.01" step="0.1" value="3" aria-label="Норма минут" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><input data-op-rate type="number" min="0" step="0.01" value="0" aria-label="Цена операции" placeholder="₽/шт" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><button onclick="this.closest('[data-op-row]').remove()" class="col-span-1 text-rose-300">×</button></div>
+        </div>
+        <div class="text-[10px] text-slate-500">В строке: название · норма в минутах · цена операции за штуку. Для оплаты только за изделие цены операций можно оставить нулевыми.</div>
+        <button onclick="saveWorkTemplate()" class="w-full py-3 rounded-xl bg-emerald-600 text-white font-extrabold">💾 Сохранить шаблон</button>
+        <div id="workTemplatesList" class="space-y-2"></div>
+      </section>
+
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
+        <div class="font-extrabold">＋ Новый заказ</div>
+        <label class="block text-xs text-slate-400">Шаблон<select id="workOrderTemplate" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-3 text-white"></select></label>
+        <div class="grid grid-cols-2 gap-2"><label class="text-xs text-slate-400">Название / номер заказа<input id="workOrderName" placeholder="Заказ №…" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-2.5 text-white"></label><label class="text-xs text-slate-400">Количество изделий<input id="workOrderQty" type="number" min="1" max="100000" value="10" class="mt-1 w-full bg-slate-950 border border-slate-600 rounded-xl p-2.5 text-white"></label></div>
+        <button onclick="createWorkOrder()" class="w-full py-3 rounded-xl bg-indigo-600 text-white font-extrabold">Создать заказ из шаблона</button>
+      </section>
+
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between"><div class="font-extrabold">⏱ Рабочий таймер</div><span id="workTimerState" class="text-[10px] text-slate-400">Не запущен</span></div>
+        <div id="workTimerTitle" class="text-lg font-bold text-white">Выбери операцию в заказе</div>
+        <div id="workTimerClock" class="text-5xl text-center font-black tabular-nums text-white">00:00</div>
+        <div id="workTimerMeta" class="text-center text-xs text-slate-400">Таймер один на всю работу</div>
+        <div class="grid grid-cols-2 gap-2"><button id="workPauseBtn" onclick="toggleWorkPause()" class="py-3 rounded-xl bg-amber-600 text-white font-bold" disabled>⏸ Пауза</button><button onclick="completeWorkUnit()" class="py-3 rounded-xl bg-emerald-600 text-white font-extrabold">✓ Готово</button></div>
+        <div class="grid grid-cols-2 gap-2"><button onclick="markWorkDefectNow()" class="py-3 rounded-xl bg-rose-800 text-white font-bold">⚠ Брак</button><button id="workReworkBtn" onclick="startWorkRework()" class="py-3 rounded-xl bg-sky-700 text-white font-bold" disabled>↻ Начать переделку</button></div>
+        <div class="text-[10px] text-slate-500">При переключении на другую операцию предыдущий таймер автоматически ставится на паузу. Брак на потоке фиксируется сразу; переделка учитывается отдельным временем.</div>
+      </section>
+
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between"><div class="font-extrabold">📦 Заказы и операции</div><span id="workOrderCount" class="text-xs text-slate-400"></span></div>
+        <div id="workOrdersList" class="space-y-3"></div>
+      </section>
+
+      <section class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-2">
+        <div class="font-extrabold">📊 Заработок и качество</div>
+        <div id="workAnalytics" class="grid grid-cols-2 gap-2"></div>
+        <div id="workDefectHistory" class="space-y-2"></div>
+      </section>
+    </div>
+
     <!-- ОБЩИЕ БЛОКИ: ЖУРНАЛ И БЭКАП -->
     <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-3">
       <div class="flex items-center justify-between">
@@ -430,10 +476,17 @@
       <div id="journalList" class="space-y-2 max-h-[28rem] overflow-y-auto pr-1"></div>
     </div>
 
-    <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl flex gap-2">
-      <button type="button" onclick="exportData()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📤 Бэкап в файл</button>
-      <button type="button" onclick="restoreAutoBackup()" class="flex-1 py-2 rounded-xl bg-indigo-950 border border-indigo-600 text-xs font-bold text-indigo-200">↶ Авто-бэкап</button>
-      <button type="button" onclick="document.getElementById('importFile').click()" class="flex-1 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📥 Импорт</button>
+    <div class="bg-[#1e2638]/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-xl space-y-2">
+      <div class="font-extrabold text-sm">🛡 Резервное копирование</div>
+      <div id="backupStatus" class="text-[11px] text-slate-400">Локальное автосохранение включено. Для копии вне браузера выбери папку.</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" onclick="chooseBackupFolder()" class="py-2.5 rounded-xl bg-indigo-700 text-xs font-bold text-white">📁 Выбрать папку</button>
+        <button type="button" onclick="backupNow(true)" class="py-2.5 rounded-xl bg-emerald-700 text-xs font-bold text-white">💾 Сохранить сейчас</button>
+        <button type="button" onclick="exportData()" class="py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📤 Скачать копию</button>
+        <button type="button" onclick="restoreAutoBackup()" class="py-2 rounded-xl bg-indigo-950 border border-indigo-600 text-xs font-bold text-indigo-200">↶ Авто-бэкап</button>
+        <button type="button" onclick="document.getElementById('importFile').click()" class="col-span-2 py-2 rounded-xl bg-slate-800 border border-slate-600 text-xs font-bold text-slate-300">📥 Восстановить из файла</button>
+      </div>
+      <div class="text-[10px] text-slate-500">Если браузер поддерживает доступ к папке, копия будет обновляться автоматически. Иначе можно скачать файл вручную. Облачная синхронизация Google Drive потребует отдельного подключения и на этом этапе не включена.</div>
       <input type="file" id="importFile" accept=".json" class="hidden" onchange="importData(event)">
     </div>
 
@@ -472,12 +525,12 @@
         return fallback;
       }
     }
-    const APP_BUILD_VERSION = '3.0.0';
+    const APP_BUILD_VERSION = '4.0.0';
     (function autoBackupBeforeUpgrade() {
       try {
         const previous = localStorage.getItem('m_app_build_version');
         if (previous !== APP_BUILD_VERSION) {
-          const keys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional'];
+          const keys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional','m_work_data'];
           const snapshot = { version:previous || 'до версии 3.0.0', createdAt:Date.now(), values:{} };
           keys.forEach(k => { const v = localStorage.getItem(k); if (v !== null) snapshot.values[k] = v; });
           localStorage.setItem('m_auto_recovery_backup', JSON.stringify(snapshot));
@@ -583,11 +636,206 @@
     factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0, operations:[], operationIndex:0, goodUnits:0, skippedUnits:0 }, factState);
     if (factState.goodUnits == null) factState.goodUnits = Number(factState.doneUnits) || 0;
     if (factState.skippedUnits == null) factState.skippedUnits = 0;
+    function persistFactory() { try { localStorage.setItem('m_factory_session', JSON.stringify(factState)); scheduleAutoBackup(); } catch(e) { showToast('⚠️ Не удалось сохранить смену'); } }
     if (factState.active && (!Array.isArray(factState.operations) || !factState.operations.length)) {
       factState.operations = [{ name:factState.name || 'Операция', units:factState.totalUnits || 1, totalMin:factState.totalMin || 1, unitTargetSec:factState.unitTargetSec || 60, doneUnits:factState.doneUnits || 0, unitStats:factState.unitStats || [] }];
       factState.operationIndex = 0;
     }
+    factState.autoNext = false; // Истечение нормы больше не переводит на следующую деталь автоматически.
     let factWarned20 = false, factWarnedZero = false;
+
+    // ===================== РАБОТА PRO: ИЗДЕЛИЯ, ЗАКАЗЫ, ЕДИНЫЙ ТАЙМЕР =====================
+    const WORK_KEY = 'm_work_data';
+    let workData = safeJsonParse(localStorage.getItem(WORK_KEY), null) || { templates:[], orders:[], activeTimer:null, defectLog:[] };
+    workData.templates = Array.isArray(workData.templates) ? workData.templates : [];
+    workData.orders = Array.isArray(workData.orders) ? workData.orders : [];
+    workData.defectLog = Array.isArray(workData.defectLog) ? workData.defectLog : [];
+    if(workData.activeTimer?.running&&!workData.activeTimer.paused){const t=workData.activeTimer;t.elapsedSec=Math.max(0,Number(t.elapsedSec||0)+(Date.now()-Number(t.startedAt||Date.now()))/1000);t.running=false;t.paused=true;t.startedAt=0;}
+    function saveWorkData() {
+      try { localStorage.setItem(WORK_KEY, JSON.stringify(workData)); }
+      catch(e) { showToast('⚠️ Не удалось сохранить работу: память браузера заполнена'); }
+      scheduleAutoBackup();
+    }
+    function workId(prefix='w') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`; }
+    function workFindOrder(id) { return workData.orders.find(x => x.id === id); }
+    function workFindOperation(orderId, opId) { const o=workFindOrder(orderId); return o?.operations?.find(x=>x.id===opId) || null; }
+    if(workData.activeTimer?.paused){const savedOp=workFindOperation(workData.activeTimer.orderId,workData.activeTimer.opId);if(savedOp)savedOp.timer={mode:workData.activeTimer.mode,elapsedSec:Number(workData.activeTimer.elapsedSec)||0,paused:true};}
+    function workTimerElapsed(timer, now=Date.now()) {
+      if (!timer) return 0;
+      return Math.max(0, Number(timer.elapsedSec||0) + (timer.running && !timer.paused ? (now-Number(timer.startedAt||now))/1000 : 0));
+    }
+    function pauseWorkTimer(silent=false) {
+      const t=workData.activeTimer; if (!t || t.paused) return;
+      t.elapsedSec = workTimerElapsed(t); t.running=false; t.paused=true; t.startedAt=0;
+      const op=workFindOperation(t.orderId,t.opId); if(op)op.timer={mode:t.mode,elapsedSec:t.elapsedSec,paused:true};
+      saveWorkData(); if(!silent) showToast('⏸ Текущая операция поставлена на паузу');
+    }
+    function startWorkTimer(orderId, opId, mode='normal') {
+      const order=workFindOrder(orderId), op=workFindOperation(orderId,opId); if(!order||!op) return;
+      const current=workData.activeTimer;
+      if (current && current.orderId===orderId && current.opId===opId) {
+        if (current.paused) { current.paused=false; current.running=true; current.startedAt=Date.now(); op.timer=null; }
+        else return;
+      } else {
+        if (current && current.running && !current.paused) pauseWorkTimer(true);
+        else if(current && current.paused) { const oldOp=workFindOperation(current.orderId,current.opId); if(oldOp)oldOp.timer={mode:current.mode,elapsedSec:Number(current.elapsedSec)||0,paused:true}; }
+        const saved=op.timer; const useMode=saved?.mode||mode;
+        workData.activeTimer={ orderId, opId, mode:useMode, running:true, paused:false, startedAt:Date.now(), elapsedSec:Number(saved?.elapsedSec)||0, unitStartedAt:Date.now() };
+        op.timer=null;
+      }
+      saveWorkData(); renderWork(); showToast(`▶ Таймер: ${op.name}${mode.startsWith('rework')?' · переделка':''}`);
+    }
+    function toggleWorkPause() {
+      const t=workData.activeTimer; if(!t) return;
+      if(t.paused) { t.paused=false; t.running=true; t.startedAt=Date.now(); const op=workFindOperation(t.orderId,t.opId); if(op)op.timer=null; }
+      else pauseWorkTimer(true);
+      saveWorkData(); renderWork();
+    }
+    function addWorkTemplateOperation(data={}) {
+      const host=document.getElementById('workTplOps'); if(!host) return;
+      const row=document.createElement('div'); row.className='work-op-edit grid grid-cols-12 gap-1.5 bg-slate-900/70 p-2 rounded-xl'; row.dataset.opRow='1';
+      row.innerHTML=`<input data-op-name class="col-span-5 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white" placeholder="Операция" value="${esc(data.name||'Новая операция')}"><input data-op-min type="number" min="0.01" step="0.1" value="${Number(data.normSec||180)/60}" aria-label="Норма минут" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><input data-op-rate type="number" min="0" step="0.01" value="${Number(data.rate||0)}" aria-label="Цена операции" placeholder="₽/шт" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><button onclick="this.closest('[data-op-row]').remove()" class="col-span-1 text-rose-300">×</button>`;
+      host.appendChild(row);
+    }
+    function saveWorkTemplate() {
+      const name=document.getElementById('workTplName').value.trim();
+      const payMode=document.getElementById('workTplPayMode').value;
+      const productPrice=Math.max(0,Number(document.getElementById('workTplPrice').value)||0);
+      const operations=[...document.querySelectorAll('#workTplOps [data-op-row]')].map(row=>({id:workId('op'),name:row.querySelector('[data-op-name]').value.trim(),normSec:Math.max(1,Math.round((Number(row.querySelector('[data-op-min]').value)||0)*60)),rate:Math.max(0,Number(row.querySelector('[data-op-rate]').value)||0)})).filter(x=>x.name&&x.normSec>0);
+      if(!name||!operations.length){showToast('Укажи название и хотя бы одну операцию');return;}
+      const tpl={id:workId('tpl'),name,payMode,productPrice,currency:document.getElementById('workTplCurrency').value||'₽',operations,createdAt:Date.now(),updatedAt:Date.now(),version:1};
+      workData.templates.unshift(tpl); saveWorkData();
+      document.getElementById('workTplName').value=''; document.getElementById('workTplOps').innerHTML=''; addWorkTemplateOperation({name:'Основная операция',normSec:180});
+      renderWork(); showToast(`Шаблон «${name}» сохранён`);
+    }
+    function createWorkOrder() {
+      const tpl=workData.templates.find(x=>x.id===document.getElementById('workOrderTemplate').value);
+      if(!tpl){showToast('Сначала создай шаблон изделия');return;}
+      const qty=Math.max(1,Math.min(100000,Math.floor(Number(document.getElementById('workOrderQty').value)||1)));
+      const order={id:workId('order'),templateId:tpl.id,templateName:tpl.name,name:document.getElementById('workOrderName').value.trim()||`${tpl.name} · ${new Date().toLocaleDateString('ru-RU')}`,createdAt:Date.now(),status:'active',plannedProductQty:qty,payMode:tpl.payMode,productPrice:tpl.productPrice,currency:tpl.currency||'₽',templateVersion:tpl.version||1,payments:[],operations:tpl.operations.map(op=>({id:workId('op'),templateOperationId:op.id,name:op.name,plannedQty:qty,doneQty:0,attempts:0,defectCount:0,normSec:op.normSec,rate:op.rate,actualSec:0,reworkSec:0,samples:[],defectEvents:[],timer:null,reworkPending:false}))};
+      workData.orders.unshift(order); saveWorkData(); document.getElementById('workOrderName').value=''; renderWork(); showToast(`Заказ «${order.name}» создан`);
+    }
+    function completeWorkUnit() {
+      const t=workData.activeTimer; if(!t){showToast('Сначала запусти таймер операции');return;}
+      if(t.paused){showToast('Сначала продолжи таймер');return;}
+      const op=workFindOperation(t.orderId,t.opId), order=workFindOrder(t.orderId); if(!op||!order)return;
+      const now=Date.now(), elapsed=Math.max(1,Math.round(workTimerElapsed(t,now)));
+      if(t.mode==='rework'||t.mode==='rework-late') {
+        op.reworkSec=(op.reworkSec||0)+elapsed;
+        if(t.mode==='rework') op.doneQty=(op.doneQty||0)+1;
+        op.pendingReworkCount=Math.max(0,(op.pendingReworkCount||1)-1); op.reworkPending=op.pendingReworkCount>0;
+        op.samples.push({sec:elapsed,kind:'rework',at:now});
+        const pending=(op.defectEvents||[]).find(e=>e.id===t.reworkEventId) || [...(op.defectEvents||[])].reverse().find(e=>(e.reworkedCount||0)<(e.count||1));
+        if(pending){pending.reworkedCount=(pending.reworkedCount||0)+1;pending.reworkSec=(pending.reworkSec||0)+elapsed;pending.reworkedAt=now;}
+        const globalPending=workData.defectLog.find(e=>e.id===pending?.id); if(globalPending){globalPending.reworkedCount=(globalPending.reworkedCount||0)+1;globalPending.reworkSec=(globalPending.reworkSec||0)+elapsed;globalPending.reworkedAt=now;}
+      } else { op.actualSec=(op.actualSec||0)+elapsed; op.doneQty=(op.doneQty||0)+1; op.attempts=(op.attempts||0)+1; op.samples.push({sec:elapsed,kind:'normal',at:now}); }
+      op.timer=null; workData.activeTimer=null; saveWorkData(); renderWork(); showToast(t.mode.startsWith('rework')?'Переделка завершена и учтена':'Изделие / операция засчитана');
+    }
+    function markWorkDefectNow() {
+      const t=workData.activeTimer; if(!t||t.paused){showToast('Запусти таймер, чтобы отметить брак на потоке');return;}
+      if(t.mode.startsWith('rework')){showToast('Во время переделки отметь результат кнопкой «Готово»');return;}
+      const op=workFindOperation(t.orderId,t.opId), order=workFindOrder(t.orderId); if(!op||!order)return;
+      const now=Date.now(), elapsed=Math.max(1,Math.round(workTimerElapsed(t,now)));
+      op.actualSec=(op.actualSec||0)+elapsed; op.attempts=(op.attempts||0)+1; op.defectCount=(op.defectCount||0)+1; op.pendingReworkCount=(op.pendingReworkCount||0)+1; op.reworkPending=true; op.samples.push({sec:elapsed,kind:'defect',at:now});
+      const event={id:workId('defect'),orderId:order.id,opId:op.id,operation:op.name,at:now,kind:'live',productionSec:elapsed,reworkSec:0,paid:true};
+      op.defectEvents.push(event); op.timer=null; workData.defectLog.unshift(event); workData.activeTimer=null; saveWorkData(); renderWork(); showToast('Брак записан. Время изготовления остановлено; переделка учитывается отдельно.');
+    }
+    function startWorkRework(orderId,opId) {
+      const op=workFindOperation(orderId,opId); if(!op||!(op.pendingReworkCount>0||op.reworkPending))return;
+      const event=[...(op.defectEvents||[])].reverse().find(e=>(e.reworkedCount||0)<(e.count||1));
+      const mode=event?.kind==='late'?'rework-late':'rework';
+      op.timer=null; startWorkTimer(orderId,opId,mode);
+      if(workData.activeTimer){workData.activeTimer.reworkEventId=event?.id||null;saveWorkData();renderWork();}
+    }
+    function addHistoricalDefect(orderId,opId) {
+      const op=workFindOperation(orderId,opId), order=workFindOrder(orderId); if(!op||!order)return;
+      const raw=prompt(`Сколько изделий в операции «${op.name}» обнаружено бракованными?`,'1'); if(raw===null)return;
+      const count=Math.max(1,Math.min(100000,Math.floor(Number(raw)||0))); if(!count)return;
+      const event={id:workId('defect'),orderId,opId,operation:op.name,at:Date.now(),kind:'late',count,paid:true,note:'Обнаружено позднее'};
+      op.defectCount=(op.defectCount||0)+count; op.pendingReworkCount=(op.pendingReworkCount||0)+count; op.reworkPending=true; op.defectEvents.push(event); workData.defectLog.unshift(event); saveWorkData(); renderWork(); showToast(`В историю добавлено: ${count} шт. брака. Оплата не изменена.`);
+    }
+    function setWorkOperationQty(orderId,opId,value) { const op=workFindOperation(orderId,opId); if(!op)return; const qty=Math.max(1,Math.min(100000,Math.floor(Number(value)||1))); if((op.doneQty||0)>qty){showToast('Количество не может быть меньше уже выполненного');return;} op.plannedQty=qty; saveWorkData(); renderWork(); }
+    function workNormStats(op) { const a=(op.samples||[]).filter(x=>x.kind==='normal').map(x=>Number(x.sec)).filter(x=>x>0).sort((x,y)=>x-y); if(!a.length)return null; const mid=Math.floor(a.length/2); const median=a.length%2?a[mid]:(a[mid-1]+a[mid])/2; return {count:a.length,median:Math.round(median),average:Math.round(a.reduce((s,x)=>s+x,0)/a.length)}; }
+    function applyWorkNormSuggestion(orderId,opId) { const order=workFindOrder(orderId),op=workFindOperation(orderId,opId); if(!order||!op)return; const stats=workNormStats(op); if(!stats||stats.count<4){showToast('Для предложения нормы нужно хотя бы 4 замера');return;} const tpl=workData.templates.find(x=>x.id===order.templateId); const top=tpl?.operations.find(x=>x.id===op.templateOperationId); if(!top)return; if(!confirm(`Обновить норму «${op.name}» в шаблоне с ${fmtSec(top.normSec)} до медианы ${fmtSec(stats.median)}? Старые заказы не изменятся.`))return; top.normSec=stats.median; tpl.version=(tpl.version||1)+1; tpl.updatedAt=Date.now(); saveWorkData(); renderWork(); showToast('Норма шаблона обновлена. Это повлияет только на новые заказы.'); }
+    function workCompletedProducts(order) {
+      if(!order.operations.length)return 0;
+      return Math.min(...order.operations.map(op=>Math.floor(((op.doneQty||0)/Math.max(1,op.plannedQty||1))*order.plannedProductQty)));
+    }
+    function workOrderEarnings(order) {
+      const productCount=workCompletedProducts(order);
+      const opPay=order.operations.reduce((sum,op)=>sum+(op.doneQty||0)*(op.rate||0),0);
+      if(order.payMode==='product')return productCount*(order.productPrice||0);
+      if(order.payMode==='operation')return opPay;
+      return productCount*(order.productPrice||0)+opPay;
+    }
+    function workOrderForecast(order) { const productPay=(order.plannedProductQty||0)*(order.productPrice||0); const operationPay=(order.operations||[]).reduce((s,x)=>s+(x.plannedQty||0)*(x.rate||0),0); return order.payMode==='product'?productPay:order.payMode==='operation'?operationPay:productPay+operationPay; }
+    function recordWorkPayment(orderId) { const order=workFindOrder(orderId); if(!order)return; const earned=workOrderEarnings(order),paid=(order.payments||[]).reduce((s,x)=>s+(Number(x.amount)||0),0),pending=Math.max(0,earned-paid); if(pending<=0){showToast('По этому заказу начисленная сумма уже отмечена как выплаченная');return;} const raw=prompt(`Сколько получено по заказу? Остаток: ${pending.toFixed(2)} ${order.currency||'₽'}`,pending.toFixed(2)); if(raw===null)return; const amount=Math.max(0,Math.min(pending,Number(String(raw).replace(',','.'))||0)); if(!amount)return; order.payments=Array.isArray(order.payments)?order.payments:[]; order.payments.push({amount,at:Date.now()}); saveWorkData(); renderWork(); showToast(`Оплата ${amount.toFixed(2)} ${order.currency||'₽'} записана`); }
+    function renderWork() {
+      const tplSel=document.getElementById('workOrderTemplate'); if(!tplSel)return;
+      const old=tplSel.value; tplSel.innerHTML=workData.templates.map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · ${t.operations.length} оп.</option>`).join('')||'<option value="">Сначала создай шаблон</option>';
+      if(workData.templates.some(t=>t.id===old))tplSel.value=old;
+      document.getElementById('workTemplatesList').innerHTML=workData.templates.map(t=>`<div class="p-2 rounded-lg bg-slate-900/70 border border-slate-700 text-xs"><b>${esc(t.name)}</b> · v${t.version||1} · ${t.operations.length} операций · ${t.payMode==='product'?'за изделие':t.payMode==='operation'?'за операции':'смешанная'}<div class="text-slate-400 mt-1">${t.operations.map(o=>`${esc(o.name)} (${fmtSec(o.normSec)})`).join(' · ')}</div></div>`).join('');
+      const timer=workData.activeTimer, order=timer&&workFindOrder(timer.orderId), op=timer&&workFindOperation(timer.orderId,timer.opId);
+      document.getElementById('workTimerTitle').textContent=op?`${order.name} · ${op.name}${timer.mode==='rework'?' · ПЕРЕДЕЛКА':''}`:'Выбери операцию в заказе';
+      document.getElementById('workTimerClock').textContent=timer?fmtSec(workTimerElapsed(timer)):'00:00';
+      document.getElementById('workTimerState').textContent=timer?(timer.paused?'ПАУЗА':'ИДЁТ'):'Не запущен';
+      document.getElementById('workTimerMeta').textContent=op?`Норма ${fmtSec(op.normSec)} · Готово ${op.doneQty}/${op.plannedQty} · Брак ${op.defectCount||0} · ${timer.mode.startsWith('rework')?'учёт переделки':'учёт изготовления'}`:'Таймер один на всю работу';
+      document.getElementById('workPauseBtn').disabled=!timer; document.getElementById('workPauseBtn').textContent=timer?.paused?'▶ Продолжить':'⏸ Пауза';
+      document.getElementById('workReworkBtn').disabled=!(op&&(op.reworkPending||op.pendingReworkCount>0)&&!timer);
+      document.getElementById('workOrderCount').textContent=`${workData.orders.length} заказ(ов)`;
+      document.getElementById('workOrdersList').innerHTML=workData.orders.map(o=>{
+        const earning=workOrderEarnings(o), prod=workCompletedProducts(o), paid=(o.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0), pending=Math.max(0,earning-paid);
+        return `<article class="rounded-xl border border-slate-700 bg-slate-900/60 p-3 space-y-2"><div class="flex justify-between gap-2"><div><div class="font-extrabold text-white">${esc(o.name)}</div><div class="text-[10px] text-slate-400">${esc(o.templateName)} · создан ${new Date(o.createdAt).toLocaleDateString('ru-RU')} · шаблон v${o.templateVersion}</div></div><div class="text-right text-xs text-emerald-300 font-bold">${earning.toFixed(2)} ${esc(o.currency||'₽')}<div class="text-[10px] text-slate-500">начислено · выплачено ${paid.toFixed(2)} · долг ${pending.toFixed(2)}</div></div></div><div class="text-[11px] text-slate-300">Изделий по заказу: ${o.plannedProductQty} · полностью собрано: ${prod}</div>${o.operations.map(x=>`<div class="rounded-lg bg-slate-950/80 border border-slate-800 p-2 space-y-1"><div class="flex justify-between gap-2"><b class="text-xs">${esc(x.name)}</b><span class="text-[10px] text-slate-400">${x.doneQty}/${x.plannedQty} · брак ${x.defectCount||0}</span></div><div class="grid grid-cols-2 gap-2 text-[10px] text-slate-500"><label>Количество по операции<input type="number" min="1" value="${x.plannedQty}" onchange="setWorkOperationQty('${o.id}','${x.id}',this.value)" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white"></label><div class="pt-1">Норма ${fmtSec(x.normSec)} · факт ${fmtSec(x.actualSec||0)} · переделка ${fmtSec(x.reworkSec||0)}</div></div><div class="text-[10px] text-slate-500">Замеров: ${workNormStats(x)?.count||0}${workNormStats(x)?` · медиана ${fmtSec(workNormStats(x).median)} · среднее ${fmtSec(workNormStats(x).average)}`:''}</div>${(workNormStats(x)?.count||0)>=4?`<button onclick="applyWorkNormSuggestion('${o.id}','${x.id}')" class="w-full py-1.5 rounded bg-indigo-950 text-indigo-200 text-[10px]">Предложить медиану как новую норму шаблона</button>`:''}<div class="grid grid-cols-2 gap-1"><button onclick="startWorkTimer('${o.id}','${x.id}')" class="py-2 rounded-lg ${timer?.orderId===o.id&&timer?.opId===x.id&&!timer.paused?'bg-slate-700':'bg-sky-800'} text-white text-[11px] font-bold">${timer?.orderId===o.id&&timer?.opId===x.id?(timer.paused?'▶ Продолжить':'● Таймер идёт'):'▶ Начать / продолжить'}</button><button onclick="addHistoricalDefect('${o.id}','${x.id}')" class="py-2 rounded-lg bg-rose-950 border border-rose-800 text-rose-200 text-[11px] font-bold">＋ Брак в истории</button></div>${(x.reworkPending||x.pendingReworkCount>0)?`<button onclick="startWorkRework('${o.id}','${x.id}')" class="w-full py-2 rounded-lg bg-amber-800 text-white text-[11px] font-bold">↻ Начать переделку</button>`:''}</div>`).join('')}<button onclick="recordWorkPayment('${o.id}')" class="w-full py-2 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200 text-[11px] font-bold">＋ Отметить выплату</button><div class="text-[10px] text-slate-500">Брак и поздние отметки не уменьшают начисленную оплату.</div></article>`;
+      }).join('')||'<div class="text-xs text-slate-500">Пока заказов нет. Создай шаблон, затем заказ.</div>';
+      const totalDef=workData.orders.reduce((a,o)=>a+o.operations.reduce((n,x)=>n+(x.defectCount||0),0),0), totalWork=workData.orders.reduce((a,o)=>a+o.operations.reduce((n,x)=>n+(x.actualSec||0)+(x.reworkSec||0),0),0);
+      const currencies=[...new Set(workData.orders.map(o=>o.currency||'₽'))];
+      const moneyCards=currencies.map(cur=>{const group=workData.orders.filter(o=>(o.currency||'₽')===cur);const earned=group.reduce((a,o)=>a+workOrderEarnings(o),0),paid=group.reduce((a,o)=>a+(o.payments||[]).reduce((n,p)=>n+(Number(p.amount)||0),0),0),pending=Math.max(0,earned-paid),forecast=group.reduce((a,o)=>a+workOrderForecast(o),0);return `<div class="col-span-2 bg-slate-900 rounded-xl p-3"><div class="text-xs font-bold text-slate-300">Деньги · ${esc(cur)}</div><div class="grid grid-cols-2 gap-2 mt-2"><div><div class="text-lg font-black text-emerald-300">${earned.toFixed(2)}</div><div class="text-[10px] text-slate-400">Начислено</div></div><div><div class="text-lg font-black">${paid.toFixed(2)}</div><div class="text-[10px] text-slate-400">Выплачено</div></div><div><div class="text-lg font-black text-amber-300">${pending.toFixed(2)}</div><div class="text-[10px] text-slate-400">Ожидает оплаты</div></div><div><div class="text-lg font-black text-sky-300">${forecast.toFixed(2)}</div><div class="text-[10px] text-slate-400">Прогноз по заказам</div></div></div></div>`;}).join('');
+      document.getElementById('workAnalytics').innerHTML=`${moneyCards}<div class="bg-slate-900 rounded-xl p-3"><div class="text-xl font-black">${totalDef}</div><div class="text-[10px] text-slate-400">Отмечено брака</div></div><div class="bg-slate-900 rounded-xl p-3"><div class="text-xl font-black">${fmtSec(totalWork)}</div><div class="text-[10px] text-slate-400">Производство + переделки</div></div><div class="bg-slate-900 rounded-xl p-3"><div class="text-xl font-black">${workData.orders.length}</div><div class="text-[10px] text-slate-400">Заказов</div></div>`;
+      document.getElementById('workDefectHistory').innerHTML=workData.defectLog.slice(0,12).map(e=>`<div class="text-[10px] text-slate-400 border-t border-slate-800 pt-1">${new Date(e.at).toLocaleString('ru-RU')} · ${esc(e.operation)} · ${e.kind==='late'?'поздний брак': 'брак на потоке'} · ${e.count||1} шт. · оплата сохранена</div>`).join('');
+    }
+
+    // ===================== ВНЕШНИЕ РЕЗЕРВНЫЕ КОПИИ =====================
+    let backupDirectoryHandle=null, backupWriteBusy=false, lastBackupAt=0;
+    function collectFullBackup() {
+      const values={}; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('m_'))values[k]=localStorage.getItem(k);}
+      values[WORK_KEY]=JSON.stringify(workData);
+      return {app:'Утренний Темп PRO+',formatVersion:4,createdAt:Date.now(),values};
+    }
+    function backupDb() { return new Promise((resolve,reject)=>{const req=indexedDB.open('temp-pro-backup-db',1);req.onupgradeneeded=()=>req.result.createObjectStore('handles');req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);}); }
+    async function saveBackupHandle(handle) { const db=await backupDb(); await new Promise((res,rej)=>{const tx=db.transaction('handles','readwrite');tx.objectStore('handles').put(handle,'directory');tx.oncomplete=res;tx.onerror=()=>rej(tx.error);}); db.close(); }
+    async function loadBackupHandle() { try{const db=await backupDb();const h=await new Promise((res,rej)=>{const tx=db.transaction('handles','readonly');const r=tx.objectStore('handles').get('directory');r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});db.close();return h;}catch(e){return null;} }
+    async function chooseBackupFolder() {
+      if(!window.showDirectoryPicker){showToast('Этот браузер не поддерживает прямую запись в папку. Используй «Скачать копию».');return;}
+      try{backupDirectoryHandle=await window.showDirectoryPicker({mode:'readwrite'});await saveBackupHandle(backupDirectoryHandle);const perm=await backupDirectoryHandle.requestPermission({mode:'readwrite'});if(perm!=='granted'){showToast('Нет разрешения на запись в выбранную папку');return;}showToast('Папка резервных копий подключена');await backupNow(true);}catch(e){if(e.name!=='AbortError')showToast('Не удалось подключить папку: '+e.message);}
+    }
+    async function writeBackupFile(dir,name,blob) { const handle=await dir.getFileHandle(name,{create:true});const writable=await handle.createWritable();await writable.write(blob);await writable.close(); }
+    async function backupNow(force=false) {
+      if(backupWriteBusy)return; backupWriteBusy=true;
+      try{
+        const payload=collectFullBackup(), json=JSON.stringify(payload,null,2), blob=new Blob([json],{type:'application/json'});
+        try{localStorage.setItem('m_last_local_backup',JSON.stringify({createdAt:payload.createdAt,formatVersion:4,bytes:blob.size}));}catch(e){}
+        if(!backupDirectoryHandle)backupDirectoryHandle=await loadBackupHandle();
+        if(backupDirectoryHandle){let perm=await backupDirectoryHandle.queryPermission({mode:'readwrite'});if(perm!=='granted')perm=await backupDirectoryHandle.requestPermission({mode:'readwrite'});if(perm==='granted'){
+          await writeBackupFile(backupDirectoryHandle,'UtrenniyTemp_latest.json',blob);
+          const day=new Date(payload.createdAt).toISOString().slice(0,10); await writeBackupFile(backupDirectoryHandle,`UtrenniyTemp_${day}.json`,blob);
+          lastBackupAt=payload.createdAt;const st=document.getElementById('backupStatus');if(st)st.textContent=`✓ Внешняя копия сохранена: ${new Date(lastBackupAt).toLocaleString('ru-RU')} · ${Math.round(blob.size/1024)} КБ`;
+          backupWriteBusy=false;return true;
+        }}
+        lastBackupAt=payload.createdAt; const st=document.getElementById('backupStatus');if(st)st.textContent='Локальные данные сохранены. Внешняя папка не подключена или разрешение недоступно — скачай копию вручную.';
+        if(force){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`UtrenniyTemp_backup_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500);if(st)st.textContent='✓ Резервная копия скачана. Храни файл отдельно от телефона.';}
+        backupWriteBusy=false;return false;
+      }catch(e){const st=document.getElementById('backupStatus');if(st)st.textContent='Ошибка резервного копирования: '+e.message;backupWriteBusy=false;return false;}
+    }
+    let backupScheduleTimer=null;
+    function scheduleAutoBackup(){ if(backupScheduleTimer)return; backupScheduleTimer=setTimeout(()=>{backupScheduleTimer=null;if(backupDirectoryHandle||lastBackupAt===0)backupNow(false);},5000); }
+    try {
+      const nativeStorageSet=Storage.prototype.setItem;
+      Storage.prototype.setItem=function(key,value){nativeStorageSet.call(this,key,value);if(this===window.localStorage&&String(key).startsWith('m_')&&!['m_last_local_backup','m_auto_recovery_backup','m_backup_before_import','m_backup_before_auto_restore'].includes(String(key))&&typeof scheduleAutoBackup==='function')scheduleAutoBackup();};
+      const nativeStorageRemove=Storage.prototype.removeItem;
+      Storage.prototype.removeItem=function(key){nativeStorageRemove.call(this,key);if(this===window.localStorage&&String(key).startsWith('m_')&&typeof scheduleAutoBackup==='function')scheduleAutoBackup();};
+    } catch(e) {}
+    window.addEventListener('pagehide',()=>{try{localStorage.setItem('m_work_data',JSON.stringify(workData));}catch(e){}});
+
 
     // --- ПЕРЕХВАТ НАУШНИКОВ ---
     function setupMediaSessionHandlers() {
@@ -595,21 +843,27 @@
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: 'Темп-Будильник',
-            artist: currentMode === 'factory' ? 'Производственный поток' : 'Цепочка задач',
+            artist: currentMode === 'factory' ? 'Производственный поток' : (currentMode === 'work' ? 'Работа PRO+' : 'Цепочка задач'),
             album: 'Швейный поток'
           });
           navigator.mediaSession.setActionHandler('nexttrack', () => {
-            if (currentMode === 'factory' && factState.active) {
+            if (currentMode === 'factory' && factState.active && !factState.paused) {
               handleFactoryMainBtn();
             } else if (currentMode === 'morning' && activeIdx >= 0 && activeIdx < tasks.length) {
               handleMainBtn();
+            } else if (currentMode === 'work' && workData.activeTimer && !workData.activeTimer.paused) {
+              completeWorkUnit();
             }
           });
           navigator.mediaSession.setActionHandler('play', () => {
-            if (currentMode === 'factory' ? factState.active && factState.paused : paused) togglePause();
+            if(currentMode==='work' && workData.activeTimer?.paused) toggleWorkPause();
+            else if(currentMode==='factory' && factState.active && factState.paused) togglePause();
+            else if(currentMode==='morning' && paused) togglePause();
           });
           navigator.mediaSession.setActionHandler('pause', () => {
-            if (currentMode === 'factory' ? factState.active && !factState.paused : !paused) togglePause();
+            if(currentMode==='work' && workData.activeTimer && !workData.activeTimer.paused) toggleWorkPause();
+            else if(currentMode==='factory' && factState.active && !factState.paused) togglePause();
+            else if(currentMode==='morning' && !paused) togglePause();
           });
         } catch(e) {}
       }
@@ -617,12 +871,20 @@
 
     // --- ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ---
     function switchMode(mode) {
+      if(currentMode!==mode){
+        if(currentMode==='work' && workData.activeTimer && !workData.activeTimer.paused) pauseWorkTimer(true);
+        else if(currentMode==='factory' && factState.active && !factState.paused) togglePause();
+        else if(currentMode==='morning' && activeIdx>=0 && activeIdx<tasks.length && !paused) togglePause();
+      }
       currentMode = mode;
       localStorage.setItem('m_app_mode', mode);
       document.getElementById('tabMorning').classList.toggle('active', mode === 'morning');
       document.getElementById('tabFactory').classList.toggle('active', mode === 'factory');
+      document.getElementById('tabWork').classList.toggle('active', mode === 'work');
       document.getElementById('modeMorning').classList.toggle('hidden', mode !== 'morning');
       document.getElementById('modeFactory').classList.toggle('hidden', mode !== 'factory');
+      document.getElementById('modeWork').classList.toggle('hidden', mode !== 'work');
+      if (mode === 'work') renderWork();
       render();
     }
 
@@ -2629,10 +2891,10 @@ function toggleSuggestion(idx, checked) {
     }
 
     function factoryPlanRows() {
-      return [...document.querySelectorAll('#factoryPlanBody tr[data-factory-row]')];
+      return [...document.querySelectorAll('#factoryPlanBody [data-factory-row]')];
     }
     function syncFactoryRow(input, source) {
-      const row = input.closest('tr'); if (!row) return;
+      const row = input.closest('[data-factory-row]'); if (!row) return;
       const unitsEl = row.querySelector('[data-field="units"]');
       const totalEl = row.querySelector('[data-field="total"]');
       const unitEl = row.querySelector('[data-field="unit"]');
@@ -2651,22 +2913,22 @@ function toggleSuggestion(idx, checked) {
     }
     function addFactoryPlanRow(data = {}) {
       const body = document.getElementById('factoryPlanBody'); if (!body) return;
-      const tr = document.createElement('tr'); tr.dataset.factoryRow = '1'; tr.className = 'border-t border-slate-800';
+      const row = document.createElement('div'); row.dataset.factoryRow = '1'; row.className = 'rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-2';
       const units = Math.max(1, Number(data.units) || 10);
       const unit = Number(data.unitMin) || 1;
       const total = Number(data.totalMin) || unit * units;
-      tr.innerHTML = `<td class="p-1"><input data-field="name" aria-label="Название операции" value="${esc(data.name || 'Новая операция')}" class="w-full min-w-[120px] bg-slate-950 border border-slate-700 rounded px-2 py-2 text-white" /></td>
-        <td class="p-1"><input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="${units}" oninput="syncFactoryRow(this,'units')" class="w-16 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-        <td class="p-1"><input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="${total.toFixed(2)}" oninput="syncFactoryRow(this,'total')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-        <td class="p-1"><input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="${unit.toFixed(3)}" oninput="syncFactoryRow(this,'unit')" class="w-20 bg-slate-950 border border-slate-700 rounded px-1 py-2 text-center text-white tabular-nums" /></td>
-        <td data-field="sum" class="p-2 text-center text-emerald-300 font-bold tabular-nums">${(total).toFixed(1)} мин</td>
-        <td class="p-1"><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-2 text-rose-300">✕</button></td>`;
-      body.appendChild(tr); updateFactCalc();
+      row.innerHTML = `<div class="flex items-center justify-between gap-2"><label class="text-[10px] text-slate-400">Операция / узел</label><button type="button" onclick="removeFactoryPlanRow(this)" aria-label="Удалить операцию" class="px-2 py-1 text-rose-300">✕ Удалить</button></div>
+        <input data-field="name" aria-label="Название операции" value="${esc(data.name || 'Новая операция')}" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm" />
+        <div class="grid grid-cols-2 gap-2"><label class="text-[10px] text-slate-400">Количество деталей<input data-field="units" aria-label="Количество деталей" type="number" min="1" step="1" value="${units}" oninput="syncFactoryRow(this,'units')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label>
+        <label class="text-[10px] text-slate-400">Общее время, мин<input data-field="total" aria-label="Общее время операции" type="number" min="0.01" step="0.1" value="${total.toFixed(2)}" oninput="syncFactoryRow(this,'total')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label></div>
+        <label class="block text-[10px] text-slate-400">Время на 1 деталь, мин<input data-field="unit" aria-label="Время на одну деталь" type="number" min="0.01" step="0.01" value="${unit.toFixed(3)}" oninput="syncFactoryRow(this,'unit')" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-center text-white tabular-nums" /></label>
+        <div data-field="sum" class="text-xs text-emerald-300 font-bold tabular-nums">Итого: ${total.toFixed(1)} мин</div>`;
+      body.appendChild(row); updateFactCalc();
     }
     function removeFactoryPlanRow(button) {
       const rows = factoryPlanRows();
       if (rows.length <= 1) { showToast('Оставь хотя бы одну операцию'); return; }
-      button.closest('tr')?.remove(); updateFactCalc();
+      button.closest('[data-factory-row]')?.remove(); updateFactCalc();
     }
     function updateFactCalc() {
       const out = document.getElementById('factCalcResult'); if (!out) return;
@@ -2679,7 +2941,7 @@ function toggleSuggestion(idx, checked) {
         const sec = Math.round(unit * 60);
         if (name && units > 0 && Number.isFinite(total) && total > 0 && sec > 0) {
           valid++; unitsTotal += units; secondsTotal += Math.round(total * 60);
-          row.querySelector('[data-field="sum"]').textContent = `${(total).toFixed(1)} мин`;
+          row.querySelector('[data-field="sum"]').textContent = `Итого: ${(total).toFixed(1)} мин`;
         } else row.querySelector('[data-field="sum"]').textContent = '—';
       });
       out.textContent = valid ? `Итого по карте: ${unitsTotal} шт · ${fmtSec(secondsTotal)} · ${valid} операций` : 'Добавь название, количество и время для операции';
@@ -2844,6 +3106,8 @@ function toggleSuggestion(idx, checked) {
         document.getElementById('factStepCounter').textContent = `${currentOp?.name || factState.name} · Деталь ${(currentOp?.doneUnits||0)+1} из ${currentOp?.units || factState.totalUnits}${factState.paused ? ' · ПАУЗА' : ''}`;
         document.getElementById('factCurrentTaskName').textContent = currentOp?.name || factState.name;
         document.getElementById('factPauseBtn').textContent = factState.paused ? '▶' : '⏸';
+        const factMain=document.getElementById('factMainBtn'); const factTitle=document.getElementById('factMainBtnTitle'); const factSub=document.getElementById('factMainBtnSub');
+        if(factMain&&factTitle){factTitle.textContent=factState.paused?'▶ ПРОДОЛЖИТЬ':'✓ ШТУКА ГОТОВА';factSub.textContent=factState.paused?'Продолжить текущую деталь':'Подтвердить готовность текущей детали';factMain.onclick=factState.paused?togglePause:handleFactoryMainBtn;}
         const autoNextLive = document.getElementById('factAutoNextLive'); if (autoNextLive) autoNextLive.checked = !!factState.autoNext;
         const elapsed = factState.paused
           ? Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000)
@@ -2932,11 +3196,14 @@ function toggleSuggestion(idx, checked) {
           factWarnedZero = true;
           playBeep(500, 0.12, 3);
           vibrate([80, 40, 80]);
-          if (factState.autoNext) {
-            handleFactoryMainBtn();
-            return;
-          }
+          // По окончании нормы продолжаем учитывать перерасход на той же детали.
+          // Переход только после ручного подтверждения «Готово» или «Брак / пропуск».
+          if (factState.autoNext) { factState.autoNext = false; persistFactory(); const autoEl=document.getElementById('factAutoNextLive'); if(autoEl)autoEl.checked=false; }
         }
+      } else if (currentMode === 'work' && workData.activeTimer && workData.activeTimer.running && !workData.activeTimer.paused) {
+        const timer=workData.activeTimer;
+        const title=document.getElementById('workTimerClock');
+        if(title) title.textContent=fmtSec(workTimerElapsed(timer));
       }
       updateClockAndTimerUI();
       if (typeof renderFactoryUI === 'function' && currentMode === 'factory') {
@@ -2945,10 +3212,11 @@ function toggleSuggestion(idx, checked) {
     }, 500);
 
     function exportData() {
-      const data = { formatVersion:2, exportedAt:Date.now(), templates: customTemplates, journal: journal, session: safeJsonParse(localStorage.getItem('m_active_session'), null), factorySession: factState, factoryHistory: safeJsonParse(localStorage.getItem('m_factory_history'), []), settings:{ deadlineTime:localStorage.getItem('m_deadline_time'), deadlineDate:localStorage.getItem('m_deadline_date'), exitBufferMin:localStorage.getItem('m_exit_buffer_min'), autoCompress:localStorage.getItem('m_auto_compress'), useDeadline:localStorage.getItem('m_use_deadline'), silentMode:localStorage.getItem('m_silent_mode'), autoVoiceWindow:localStorage.getItem('m_auto_voice_win'), notify:localStorage.getItem('m_notify'), autoSkipOptional:localStorage.getItem('m_auto_skip_optional'), reduceMotion:localStorage.getItem('m_reduce_motion') } };
-      const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+      const data = typeof collectFullBackup === 'function' ? collectFullBackup() : { formatVersion:4, exportedAt:Date.now(), templates:customTemplates, journal, session:safeJsonParse(localStorage.getItem('m_active_session'),null), factorySession:factState, factoryHistory:safeJsonParse(localStorage.getItem('m_factory_history'),[]), workData };
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'timetemp_backup.json'; a.click(); showToast('📤 Резервная копия скачана');
+      a.download = `UtrenniyTemp_backup_${new Date().toISOString().slice(0,10)}.json`; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),1500); showToast('📤 Полная резервная копия скачана');
     }
 
     function restoreAutoBackup() {
@@ -2960,7 +3228,7 @@ function toggleSuggestion(idx, checked) {
         const current = {};
         Object.keys(snap.values).forEach(k => { current[k] = localStorage.getItem(k); });
         localStorage.setItem('m_backup_before_auto_restore', JSON.stringify({ createdAt:Date.now(), values:current }));
-        const restoreKeys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional'];
+        const restoreKeys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional','m_work_data'];
         restoreKeys.forEach(k => { if (Object.prototype.hasOwnProperty.call(snap.values,k)) localStorage.setItem(k,snap.values[k]); else localStorage.removeItem(k); });
         location.reload();
       } catch(e) { alert('Не удалось восстановить бэкап: хранилище недоступно или переполнено.'); }
@@ -2972,6 +3240,14 @@ function toggleSuggestion(idx, checked) {
       reader.onload = ev => {
         try {
           const data = JSON.parse(ev.target.result);
+          if (data && data.app === 'Утренний Темп PRO+' && data.formatVersion >= 4 && data.values && typeof data.values === 'object') {
+            const validEntries=Object.entries(data.values).filter(([k,v])=>k.startsWith('m_') && typeof v==='string');
+            if(!validEntries.length){alert('В резервной копии нет данных приложения.');return;}
+            const before={createdAt:Date.now(),values:{}}; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('m_'))before.values[k]=localStorage.getItem(k);}
+            localStorage.setItem('m_backup_before_import',JSON.stringify(before));
+            validEntries.forEach(([k,v])=>localStorage.setItem(k,v));
+            alert('Полная резервная копия восстановлена. Страница будет перезагружена.'); location.reload(); return;
+          }
           const okTemplates = Array.isArray(data.templates) && data.templates.length > 0 && data.templates.every(t =>
             t && typeof t.name === 'string' && t.name.trim().length > 0 && Array.isArray(t.tasks) && t.tasks.length > 0 &&
             t.tasks.every(x => x && typeof x.title === 'string' && x.title.trim().length > 0 &&
@@ -2989,8 +3265,9 @@ function toggleSuggestion(idx, checked) {
             Array.isArray(data.factorySession.unitStats || []) &&
             (data.factorySession.operations === undefined || (Array.isArray(data.factorySession.operations) && data.factorySession.operations.every(op => op && typeof op.name === 'string' && Number.isInteger(Number(op.units)) && Number(op.units) > 0 && Number.isFinite(Number(op.unitTargetSec)) && Number(op.unitTargetSec) > 0))));
           const okFactoryHistory = data.factoryHistory === undefined || (Array.isArray(data.factoryHistory) && data.factoryHistory.every(x => x && typeof x.name === 'string' && Number.isFinite(Number(x.startedAt)) && Number.isFinite(Number(x.endedAt))));
+          const okWork = data.workData === undefined || (data.workData && typeof data.workData === 'object' && Array.isArray(data.workData.templates) && Array.isArray(data.workData.orders));
           const okSettings = data.settings === undefined || (data.settings && typeof data.settings === 'object' && Object.values(data.settings).every(v => v === null || typeof v === 'string'));
-          if (!okTemplates || !okJournal || !okFactory || !okSession || !okFactoryHistory || !okSettings) {
+          if (!okTemplates || !okJournal || !okFactory || !okSession || !okFactoryHistory || !okSettings || !okWork) {
             alert('Файл не похож на резервную копию — импорт отменён.');
             return;
           }
@@ -3005,6 +3282,7 @@ function toggleSuggestion(idx, checked) {
           };
           localStorage.setItem('m_backup_before_import', JSON.stringify(backup));
           localStorage.setItem('m_custom_templates', JSON.stringify(data.templates));
+          if (data.workData) localStorage.setItem('m_work_data', JSON.stringify(data.workData));
           if (Array.isArray(data.journal)) localStorage.setItem('m_journal', JSON.stringify(data.journal));
           if (data.session && typeof data.session === 'object') localStorage.setItem('m_active_session', JSON.stringify(data.session));
           else localStorage.removeItem('m_active_session');
@@ -3029,9 +3307,14 @@ function toggleSuggestion(idx, checked) {
       renderTemplates();
       renderJournal();
       render();
-      switchMode(currentMode === 'factory' ? 'factory' : 'morning');
+      switchMode(currentMode === 'factory' ? 'factory' : (currentMode === 'work' ? 'work' : 'morning'));
       renderFactoryUI();
+      if (!document.querySelector('#workTplOps [data-op-row]')) addWorkTemplateOperation({name:'Основная операция',normSec:180});
+      renderWork();
       updateFactCalc();
+      backupDirectoryHandle = null; loadBackupHandle().then(h=>{backupDirectoryHandle=h; const st=document.getElementById('backupStatus'); if(st&&h)st.textContent='Папка резервных копий подключена. Автокопия будет обновляться при работе приложения.';});
+      setInterval(()=>{if(backupDirectoryHandle)backupNow(false);},180000);
+      if(currentMode==='work')renderWork();
     } catch (err) {
       const vs = document.getElementById('voiceStatus');
       if (vs) vs.textContent = `Ошибка запуска: ${err.message}`;
