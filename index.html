@@ -122,7 +122,7 @@
           <div class="flex flex-col gap-1.5">
             <label class="flex items-center gap-2 font-semibold text-amber-300 cursor-pointer">
               <input type="checkbox" id="autoCompressToggle" checked onchange="saveSettings()" class="w-4 h-4 accent-amber-400 rounded cursor-pointer" />
-              <span>⚡ Автоужатие под дедлайн</span>
+              <span>⚡ Автоужатие под дедлайн (только текущий круг)</span>
             </label>
             <label class="flex items-center gap-2 font-semibold text-slate-300 cursor-pointer">
               <input type="checkbox" id="silentModeToggle" onchange="saveSettings()" class="w-4 h-4 accent-slate-400 rounded cursor-pointer" />
@@ -149,8 +149,8 @@
             </label>
           </div>
           <div class="flex flex-col gap-1.5">
-            <button type="button" onclick="compressToDeadline(true)"
-              class="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs active:scale-95 transition">Сжать сейчас</button>
+            <button type="button" onclick="manualCompressWithPreview()" title="Ручное ужатие, если автоужатие выключено"
+              class="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs active:scale-95 transition">Сжать сейчас вручную</button>
           </div>
         </div>
         <div class="pt-2 border-t border-slate-800 space-y-2">
@@ -193,8 +193,8 @@
             class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-white text-sm font-bold active:scale-95 transition">⏸</button>
           <button type="button" onclick="skipStep()"
             class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-white text-sm font-bold active:scale-95 transition">⏭</button>
-          <button type="button" onclick="addSavedMinute()"
-            class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-emerald-300 text-sm font-bold active:scale-95 transition">+1 мин</button>
+          <button type="button" onclick="addSavedMinute()" title="Добавить минуту только текущему проходу; шаблон не меняется"
+            class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 hover:bg-slate-700 text-emerald-300 text-sm font-bold active:scale-95 transition">+1 мин к делу</button>
           <button type="button" onclick="confirmReset()"
             class="row-btn py-3 px-1 rounded-xl border border-rose-500/40 bg-rose-950/70 hover:bg-rose-900 text-rose-200 text-sm font-bold active:scale-95 transition">↺</button>
         </div>
@@ -660,6 +660,7 @@
     // ===================== РАБОТА PRO: ИЗДЕЛИЯ, ЗАКАЗЫ, ЕДИНЫЙ ТАЙМЕР =====================
     const WORK_KEY = 'm_work_data';
     let workData = safeJsonParse(localStorage.getItem(WORK_KEY), null) || { templates:[], orders:[], activeTimer:null, defectLog:[] };
+    let editingWorkTemplateId=null;
     workData.templates = Array.isArray(workData.templates) ? workData.templates : [];
     workData.orders = Array.isArray(workData.orders) ? workData.orders : [];
     workData.defectLog = Array.isArray(workData.defectLog) ? workData.defectLog : [];
@@ -706,7 +707,7 @@
     }
     function addWorkTemplateOperation(data={}) {
       const host=document.getElementById('workTplOps'); if(!host) return;
-      const row=document.createElement('div'); row.className='work-op-edit grid grid-cols-12 gap-1.5 bg-slate-900/70 p-2 rounded-xl'; row.dataset.opRow='1';
+      const row=document.createElement('div'); row.className='work-op-edit grid grid-cols-12 gap-1.5 bg-slate-900/70 p-2 rounded-xl'; row.dataset.opRow='1'; if(data.id)row.dataset.templateOpId=data.id;
       row.innerHTML=`<input data-op-name class="col-span-5 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white" placeholder="Операция" value="${esc(data.name||'Новая операция')}"><input data-op-min type="number" min="0.01" step="0.1" value="${Number(data.normSec||180)/60}" aria-label="Норма минут" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><input data-op-rate type="number" min="0" step="0.01" value="${Number(data.rate||0)}" aria-label="Цена операции" placeholder="₽/шт" class="col-span-3 min-w-0 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"><button onclick="this.closest('[data-op-row]').remove()" class="col-span-1 text-rose-300">×</button>`;
       host.appendChild(row);
     }
@@ -714,12 +715,28 @@
       const name=document.getElementById('workTplName').value.trim();
       const payMode=document.getElementById('workTplPayMode').value;
       const productPrice=Math.max(0,Number(document.getElementById('workTplPrice').value)||0);
-      const operations=[...document.querySelectorAll('#workTplOps [data-op-row]')].map(row=>({id:workId('op'),name:row.querySelector('[data-op-name]').value.trim(),normSec:Math.max(1,Math.round((Number(row.querySelector('[data-op-min]').value)||0)*60)),rate:Math.max(0,Number(row.querySelector('[data-op-rate]').value)||0)})).filter(x=>x.name&&x.normSec>0);
+      const existing=editingWorkTemplateId?workData.templates.find(x=>x.id===editingWorkTemplateId):null;
+      const oldOps=existing?.operations||[];
+      const operations=[...document.querySelectorAll('#workTplOps [data-op-row]')].map((row,i)=>({id:row.dataset.templateOpId||oldOps[i]?.id||workId('op'),name:row.querySelector('[data-op-name]').value.trim(),normSec:Math.max(1,Math.round((Number(row.querySelector('[data-op-min]').value)||0)*60)),rate:Math.max(0,Number(row.querySelector('[data-op-rate]').value)||0)})).filter(x=>x.name&&x.normSec>0);
       if(!name||!operations.length){showToast('Укажи название и хотя бы одну операцию');return;}
-      const tpl={id:workId('tpl'),name,payMode,productPrice,currency:document.getElementById('workTplCurrency').value||'₽',operations,createdAt:Date.now(),updatedAt:Date.now(),version:1};
-      workData.templates.unshift(tpl); saveWorkData();
-      document.getElementById('workTplName').value=''; document.getElementById('workTplOps').innerHTML=''; addWorkTemplateOperation({name:'Основная операция',normSec:180});
-      renderWork(); showToast(`Шаблон «${name}» сохранён`);
+      const tpl={id:existing?.id||workId('tpl'),name,payMode,productPrice,currency:document.getElementById('workTplCurrency').value||'₽',operations,createdAt:existing?.createdAt||Date.now(),updatedAt:Date.now(),version:existing?(existing.version||1)+1:1};
+      if(existing){const ix=workData.templates.indexOf(existing);workData.templates[ix]=tpl;} else workData.templates.unshift(tpl);
+      editingWorkTemplateId=null; saveWorkData();
+      document.getElementById('workTplName').value=''; document.getElementById('workTplPayMode').value='product'; document.getElementById('workTplPrice').value='0'; document.getElementById('workTplOps').innerHTML=''; addWorkTemplateOperation({name:'Основная операция',normSec:180});
+      const saveBtn=document.querySelector('#modeWork button[onclick="saveWorkTemplate()"]'); if(saveBtn)saveBtn.textContent='💾 Сохранить шаблон';
+      renderWork(); showToast(existing?`Шаблон «${name}» обновлён. Старые заказы не изменены.`:`Шаблон «${name}» сохранён`);
+    }
+    function editWorkTemplate(id) {
+      const t=workData.templates.find(x=>x.id===id); if(!t)return;
+      editingWorkTemplateId=id; document.getElementById('workTplName').value=t.name; document.getElementById('workTplPayMode').value=t.payMode||'product'; document.getElementById('workTplPrice').value=t.productPrice||0; document.getElementById('workTplCurrency').value=t.currency||'₽';
+      const host=document.getElementById('workTplOps'); host.innerHTML=''; t.operations.forEach(op=>addWorkTemplateOperation(op));
+      const btn=document.querySelector('#modeWork button[onclick="saveWorkTemplate()"]'); if(btn)btn.textContent='💾 Сохранить изменения шаблона';
+      document.getElementById('workTplName').scrollIntoView({behavior:'smooth',block:'center'}); showToast('Редактируется шаблон. Существующие заказы останутся без изменений.');
+    }
+    function archiveWorkTemplate(id) {
+      const t=workData.templates.find(x=>x.id===id); if(!t)return;
+      if(!confirm(`Убрать шаблон «${t.name}» из списка новых заказов? Старые заказы сохранятся.`))return;
+      t.archived=true; saveWorkData(); renderWork(); showToast('Шаблон скрыт из выбора новых заказов');
     }
     function createWorkOrder() {
       const tpl=workData.templates.find(x=>x.id===document.getElementById('workOrderTemplate').value);
@@ -741,8 +758,14 @@
         const pending=(op.defectEvents||[]).find(e=>e.id===t.reworkEventId) || [...(op.defectEvents||[])].reverse().find(e=>(e.reworkedCount||0)<(e.count||1));
         if(pending){pending.reworkedCount=(pending.reworkedCount||0)+1;pending.reworkSec=(pending.reworkSec||0)+elapsed;pending.reworkedAt=now;}
         const globalPending=workData.defectLog.find(e=>e.id===pending?.id); if(globalPending){globalPending.reworkedCount=(globalPending.reworkedCount||0)+1;globalPending.reworkSec=(globalPending.reworkSec||0)+elapsed;globalPending.reworkedAt=now;}
-      } else { op.actualSec=(op.actualSec||0)+elapsed; op.doneQty=(op.doneQty||0)+1; op.attempts=(op.attempts||0)+1; op.samples.push({sec:elapsed,kind:'normal',at:now}); }
-      op.timer=null; workData.activeTimer=null; saveWorkData(); renderWork(); showToast(t.mode.startsWith('rework')?'Переделка завершена и учтена':'Изделие / операция засчитана');
+      } else { const kind=t.mode==='stopwatch'?'stopwatch':'normal'; const suspect=kind==='normal'&&Number(op.normSec)>0&&elapsed>Math.max(Number(op.normSec)*2,Number(op.normSec)+300); op.actualSec=(op.actualSec||0)+elapsed; op.doneQty=(op.doneQty||0)+1; op.attempts=(op.attempts||0)+1; op.samples.push({sec:elapsed,kind,at:now,suspect}); if(suspect)showToast('⚠️ Очень долгий замер сохранён, но исключён из расчёта нормы'); }
+      op.timer=null; workData.activeTimer=null;
+      const nextOp=order.operations.find(x=>(x.doneQty||0)<(x.plannedQty||1));
+      if(!t.mode.startsWith('rework')&&!nextOp){order.status='completed';order.completedAt=now;}
+      else if(order.status==='completed')order.status='active';
+      saveWorkData(); renderWork();
+      if(!t.mode.startsWith('rework') && nextOp){ startWorkTimer(order.id,nextOp.id,nextOp.normSec>0?'normal':'stopwatch'); showToast(nextOp.id===op.id?'✓ Деталь записана · следующая автоматически':'✓ Операция завершена · перешли к следующей'); }
+      else showToast(t.mode.startsWith('rework')?'Переделка завершена и учтена':`Заказ «${order.name}» завершён`);
     }
     function markWorkDefectNow() {
       const t=workData.activeTimer; if(!t||t.paused){showToast('Запусти таймер, чтобы отметить брак на потоке');return;}
@@ -768,7 +791,8 @@
       op.defectCount=(op.defectCount||0)+count; op.pendingReworkCount=(op.pendingReworkCount||0)+count; op.reworkPending=true; op.defectEvents.push(event); workData.defectLog.unshift(event); saveWorkData(); renderWork(); showToast(`В историю добавлено: ${count} шт. брака. Оплата не изменена.`);
     }
     function setWorkOperationQty(orderId,opId,value) { const op=workFindOperation(orderId,opId); if(!op)return; const qty=Math.max(1,Math.min(100000,Math.floor(Number(value)||1))); if((op.doneQty||0)>qty){showToast('Количество не может быть меньше уже выполненного');return;} op.plannedQty=qty; saveWorkData(); renderWork(); }
-    function workNormStats(op) { const a=(op.samples||[]).filter(x=>x.kind==='normal').map(x=>Number(x.sec)).filter(x=>x>0).sort((x,y)=>x-y); if(!a.length)return null; const mid=Math.floor(a.length/2); const median=a.length%2?a[mid]:(a[mid-1]+a[mid])/2; return {count:a.length,median:Math.round(median),average:Math.round(a.reduce((s,x)=>s+x,0)/a.length)}; }
+    function workSampleIsSuspicious(sample, op) { const sec=Number(sample?.sec)||0, norm=Number(op?.normSec)||0; return !!sample?.suspect || (sample?.kind==='normal' && norm>0 && sec>Math.max(norm*2,norm+300)); }
+    function workNormStats(op) { const samples=op.samples||[]; const valid=samples.filter(x=>x.kind==='normal'&&!workSampleIsSuspicious(x,op)); const a=valid.map(x=>Number(x.sec)).filter(x=>x>0).sort((x,y)=>x-y); const suspicious=samples.filter(x=>x.kind==='normal'&&workSampleIsSuspicious(x,op)).length; if(!a.length)return suspicious?{count:0,suspicious,median:0,average:0}:null; const mid=Math.floor(a.length/2); const median=a.length%2?a[mid]:(a[mid-1]+a[mid])/2; return {count:a.length,suspicious,median:Math.round(median),average:Math.round(a.reduce((s,x)=>s+x,0)/a.length)}; }
     function applyWorkNormSuggestion(orderId,opId) { const order=workFindOrder(orderId),op=workFindOperation(orderId,opId); if(!order||!op)return; const stats=workNormStats(op); if(!stats||stats.count<4){showToast('Для предложения нормы нужно хотя бы 4 замера');return;} const tpl=workData.templates.find(x=>x.id===order.templateId); const top=tpl?.operations.find(x=>x.id===op.templateOperationId); if(!top)return; if(!confirm(`Обновить норму «${op.name}» в шаблоне с ${fmtSec(top.normSec)} до медианы ${fmtSec(stats.median)}? Старые заказы не изменятся.`))return; top.normSec=stats.median; tpl.version=(tpl.version||1)+1; tpl.updatedAt=Date.now(); saveWorkData(); renderWork(); showToast('Норма шаблона обновлена. Это повлияет только на новые заказы.'); }
     function workCompletedProducts(order) {
       if(!order.operations.length)return 0;
@@ -785,20 +809,20 @@
     function recordWorkPayment(orderId) { const order=workFindOrder(orderId); if(!order)return; const earned=workOrderEarnings(order),paid=(order.payments||[]).reduce((s,x)=>s+(Number(x.amount)||0),0),pending=Math.max(0,earned-paid); if(pending<=0){showToast('По этому заказу начисленная сумма уже отмечена как выплаченная');return;} const raw=prompt(`Сколько получено по заказу? Остаток: ${pending.toFixed(2)} ${order.currency||'₽'}`,pending.toFixed(2)); if(raw===null)return; const amount=Math.max(0,Math.min(pending,Number(String(raw).replace(',','.'))||0)); if(!amount)return; order.payments=Array.isArray(order.payments)?order.payments:[]; order.payments.push({amount,at:Date.now()}); saveWorkData(); renderWork(); showToast(`Оплата ${amount.toFixed(2)} ${order.currency||'₽'} записана`); }
     function renderWork() {
       const tplSel=document.getElementById('workOrderTemplate'); if(!tplSel)return;
-      const old=tplSel.value; tplSel.innerHTML=workData.templates.map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · ${t.operations.length} оп.</option>`).join('')||'<option value="">Сначала создай шаблон</option>';
-      if(workData.templates.some(t=>t.id===old))tplSel.value=old;
-      document.getElementById('workTemplatesList').innerHTML=workData.templates.map(t=>`<div class="p-2 rounded-lg bg-slate-900/70 border border-slate-700 text-xs"><b>${esc(t.name)}</b> · v${t.version||1} · ${t.operations.length} операций · ${t.payMode==='product'?'за изделие':t.payMode==='operation'?'за операции':'смешанная'}<div class="text-slate-400 mt-1">${t.operations.map(o=>`${esc(o.name)} (${fmtSec(o.normSec)})`).join(' · ')}</div></div>`).join('');
+      const old=tplSel.value; tplSel.innerHTML=workData.templates.filter(t=>!t.archived).map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · ${t.operations.length} оп.</option>`).join('')||'<option value="">Сначала создай шаблон</option>';
+      if(workData.templates.some(t=>t.id===old&&!t.archived))tplSel.value=old;
+      document.getElementById('workTemplatesList').innerHTML=workData.templates.map(t=>`<div class="p-2 rounded-lg bg-slate-900/70 border border-slate-700 text-xs ${t.archived?'opacity-50':''}"><div class="flex justify-between gap-2"><b>${esc(t.name)} ${t.archived?'· архив':''}</b><span>v${t.version||1}</span></div><div class="text-slate-400 mt-1">${t.operations.map(o=>`${esc(o.name)} (${fmtSec(o.normSec)})`).join(' · ')}</div><div class="flex gap-2 mt-2"><button onclick="editWorkTemplate('${t.id}')" class="px-2 py-1 rounded bg-sky-900 text-sky-100">✏️ Изменить</button>${!t.archived?`<button onclick="archiveWorkTemplate('${t.id}')" class="px-2 py-1 rounded bg-slate-800 text-slate-300">В архив</button>`:''}</div></div>`).join('');
       const timer=workData.activeTimer, order=timer&&workFindOrder(timer.orderId), op=timer&&workFindOperation(timer.orderId,timer.opId);
       document.getElementById('workTimerTitle').textContent=op?`${order.name} · ${op.name}${timer.mode==='rework'?' · ПЕРЕДЕЛКА':''}`:'Выбери операцию в заказе';
       document.getElementById('workTimerClock').textContent=timer?fmtSec(workTimerElapsed(timer)):'00:00';
       document.getElementById('workTimerState').textContent=timer?(timer.paused?'ПАУЗА':'ИДЁТ'):'Не запущен';
-      document.getElementById('workTimerMeta').textContent=op?`Норма ${fmtSec(op.normSec)} · Готово ${op.doneQty}/${op.plannedQty} · Брак ${op.defectCount||0} · ${timer.mode.startsWith('rework')?'учёт переделки':'учёт изготовления'}`:'Таймер один на всю работу';
+      document.getElementById('workTimerMeta').textContent=op?`${timer.mode==='stopwatch'?'Без нормы · секундомер':`Норма ${fmtSec(op.normSec)}`} · Готово ${op.doneQty}/${op.plannedQty} · Брак ${op.defectCount||0} · ${timer.mode.startsWith('rework')?'учёт переделки':'учёт изготовления'}`:'Таймер один на всю работу';
       document.getElementById('workPauseBtn').disabled=!timer; document.getElementById('workPauseBtn').textContent=timer?.paused?'▶ Продолжить':'⏸ Пауза';
       document.getElementById('workReworkBtn').disabled=!(op&&(op.reworkPending||op.pendingReworkCount>0)&&!timer);
       document.getElementById('workOrderCount').textContent=`${workData.orders.length} заказ(ов)`;
       document.getElementById('workOrdersList').innerHTML=workData.orders.map(o=>{
         const earning=workOrderEarnings(o), prod=workCompletedProducts(o), paid=(o.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0), pending=Math.max(0,earning-paid);
-        return `<article class="rounded-xl border border-slate-700 bg-slate-900/60 p-3 space-y-2"><div class="flex justify-between gap-2"><div><div class="font-extrabold text-white">${esc(o.name)}</div><div class="text-[10px] text-slate-400">${esc(o.templateName)} · создан ${new Date(o.createdAt).toLocaleDateString('ru-RU')} · шаблон v${o.templateVersion}</div></div><div class="text-right text-xs text-emerald-300 font-bold">${earning.toFixed(2)} ${esc(o.currency||'₽')}<div class="text-[10px] text-slate-500">начислено · выплачено ${paid.toFixed(2)} · долг ${pending.toFixed(2)}</div></div></div><div class="text-[11px] text-slate-300">Изделий по заказу: ${o.plannedProductQty} · полностью собрано: ${prod}</div>${o.operations.map(x=>`<div class="rounded-lg bg-slate-950/80 border border-slate-800 p-2 space-y-1"><div class="flex justify-between gap-2"><b class="text-xs">${esc(x.name)}</b><span class="text-[10px] text-slate-400">${x.doneQty}/${x.plannedQty} · брак ${x.defectCount||0}</span></div><div class="grid grid-cols-2 gap-2 text-[10px] text-slate-500"><label>Количество по операции<input type="number" min="1" value="${x.plannedQty}" onchange="setWorkOperationQty('${o.id}','${x.id}',this.value)" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white"></label><div class="pt-1">Норма ${fmtSec(x.normSec)} · факт ${fmtSec(x.actualSec||0)} · переделка ${fmtSec(x.reworkSec||0)}</div></div><div class="text-[10px] text-slate-500">Замеров: ${workNormStats(x)?.count||0}${workNormStats(x)?` · медиана ${fmtSec(workNormStats(x).median)} · среднее ${fmtSec(workNormStats(x).average)}`:''}</div>${(workNormStats(x)?.count||0)>=4?`<button onclick="applyWorkNormSuggestion('${o.id}','${x.id}')" class="w-full py-1.5 rounded bg-indigo-950 text-indigo-200 text-[10px]">Предложить медиану как новую норму шаблона</button>`:''}<div class="grid grid-cols-2 gap-1"><button onclick="startWorkTimer('${o.id}','${x.id}')" class="py-2 rounded-lg ${timer?.orderId===o.id&&timer?.opId===x.id&&!timer.paused?'bg-slate-700':'bg-sky-800'} text-white text-[11px] font-bold">${timer?.orderId===o.id&&timer?.opId===x.id?(timer.paused?'▶ Продолжить':'● Таймер идёт'):'▶ Начать / продолжить'}</button><button onclick="addHistoricalDefect('${o.id}','${x.id}')" class="py-2 rounded-lg bg-rose-950 border border-rose-800 text-rose-200 text-[11px] font-bold">＋ Брак в истории</button></div>${(x.reworkPending||x.pendingReworkCount>0)?`<button onclick="startWorkRework('${o.id}','${x.id}')" class="w-full py-2 rounded-lg bg-amber-800 text-white text-[11px] font-bold">↻ Начать переделку</button>`:''}</div>`).join('')}<button onclick="recordWorkPayment('${o.id}')" class="w-full py-2 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200 text-[11px] font-bold">＋ Отметить выплату</button><div class="text-[10px] text-slate-500">Брак и поздние отметки не уменьшают начисленную оплату.</div></article>`;
+        return `<article class="rounded-xl border border-slate-700 bg-slate-900/60 p-3 space-y-2"><div class="flex justify-between gap-2"><div><div class="font-extrabold text-white">${esc(o.name)}</div><div class="text-[10px] text-slate-400">${esc(o.templateName)} · создан ${new Date(o.createdAt).toLocaleDateString('ru-RU')} · шаблон v${o.templateVersion} · ${o.status==='completed'?'✓ Завершён':'В работе'}</div></div><div class="text-right text-xs text-emerald-300 font-bold">${earning.toFixed(2)} ${esc(o.currency||'₽')}<div class="text-[10px] text-slate-500">начислено · выплачено ${paid.toFixed(2)} · долг ${pending.toFixed(2)}</div></div></div><div class="text-[11px] text-slate-300">Изделий по заказу: ${o.plannedProductQty} · полностью собрано: ${prod}</div>${o.operations.map(x=>`<div class="rounded-lg bg-slate-950/80 border border-slate-800 p-2 space-y-1"><div class="flex justify-between gap-2"><b class="text-xs">${esc(x.name)}</b><span class="text-[10px] text-slate-400">${x.doneQty}/${x.plannedQty} · брак ${x.defectCount||0}</span></div><div class="grid grid-cols-2 gap-2 text-[10px] text-slate-500"><label>Количество по операции<input type="number" min="1" value="${x.plannedQty}" onchange="setWorkOperationQty('${o.id}','${x.id}',this.value)" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white"></label><div class="pt-1">Норма ${fmtSec(x.normSec)} · факт ${fmtSec(x.actualSec||0)} · переделка ${fmtSec(x.reworkSec||0)}</div></div><div class="text-[10px] text-slate-500">Замеров для нормы: ${workNormStats(x)?.count||0}${workNormStats(x)?.suspicious?` · исключено долгих: ${workNormStats(x).suspicious}`:''}${workNormStats(x)?.count?` · медиана ${fmtSec(workNormStats(x).median)} · среднее ${fmtSec(workNormStats(x).average)}`:''}</div>${(workNormStats(x)?.count||0)>=4?`<button onclick="applyWorkNormSuggestion('${o.id}','${x.id}')" class="w-full py-1.5 rounded bg-indigo-950 text-indigo-200 text-[10px]">Предложить медиану как новую норму шаблона</button>`:''}<div class="grid grid-cols-2 gap-1"><button onclick="startWorkTimer('${o.id}','${x.id}')" class="py-2 rounded-lg ${timer?.orderId===o.id&&timer?.opId===x.id&&!timer.paused?'bg-slate-700':'bg-sky-800'} text-white text-[11px] font-bold">${timer?.orderId===o.id&&timer?.opId===x.id?(timer.paused?'▶ Продолжить':'● Таймер идёт'):'▶ Начать / продолжить'}</button><button onclick="addHistoricalDefect('${o.id}','${x.id}')" class="py-2 rounded-lg bg-rose-950 border border-rose-800 text-rose-200 text-[11px] font-bold">＋ Брак в истории</button></div><button onclick="startWorkTimer('${o.id}','${x.id}','stopwatch')" class="w-full py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-200 text-[10px]">⏱ Засечь без нормы</button>${(x.reworkPending||x.pendingReworkCount>0)?`<button onclick="startWorkRework('${o.id}','${x.id}')" class="w-full py-2 rounded-lg bg-amber-800 text-white text-[11px] font-bold">↻ Начать переделку</button>`:''}</div>`).join('')}<button onclick="recordWorkPayment('${o.id}')" class="w-full py-2 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-200 text-[11px] font-bold">＋ Отметить выплату</button><div class="text-[10px] text-slate-500">Брак и поздние отметки не уменьшают начисленную оплату.</div></article>`;
       }).join('')||'<div class="text-xs text-slate-500">Пока заказов нет. Создай шаблон, затем заказ.</div>';
       const totalDef=workData.orders.reduce((a,o)=>a+o.operations.reduce((n,x)=>n+(x.defectCount||0),0),0), totalWork=workData.orders.reduce((a,o)=>a+o.operations.reduce((n,x)=>n+(x.actualSec||0)+(x.reworkSec||0),0),0);
       const currencies=[...new Set(workData.orders.map(o=>o.currency||'₽'))];
@@ -1010,7 +1034,14 @@
       catch (error) { showToast('⚠️ Не удалось сохранить список дел'); }
     }
     function saveSettings() {
-      localStorage.setItem('m_auto_compress', document.getElementById('autoCompressToggle').checked);
+      const autoEl=document.getElementById('autoCompressToggle');
+      const wasAuto=localStorage.getItem('m_auto_compress');
+      const autoNow=!!autoEl.checked;
+      if(wasAuto==='true' && !autoNow && activeIdx>=0 && activeIdx<tasks.length){
+        for(let i=activeIdx;i<tasks.length;i++){ if(tasks[i].status!=='done' && tasks[i].status!=='skipped'){ tasks[i].compressedSec=null; tasks[i].plannedSkip=false; } }
+        stepDurationSec=getStepTargetSec(activeIdx); saveSession(); showToast('↩ Автоужатие выключено: исходные длительности оставшихся дел восстановлены');
+      }
+      localStorage.setItem('m_auto_compress', autoNow);
       localStorage.setItem('m_use_deadline', document.getElementById('useDeadline').checked);
       localStorage.setItem('m_silent_mode', document.getElementById('silentModeToggle').checked);
       localStorage.setItem('m_auto_voice_win', document.getElementById('autoVoiceWindowToggle').checked);
@@ -1270,6 +1301,13 @@
       const latestStartText = Number.isFinite(latestStartMs) ? new Date(latestStartMs).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—';
       box.innerHTML = `<div>${status}</div><div>Доступно: ${fmtSec(Math.max(0,available))} · Требуется после распределения: ${fmtSec(plan.scheduledTotal)}</div><div class="text-sky-300">Если идти по исходным длительностям, начать нужно было не позднее ${latestStartText}.</div>${rows}<div class="text-[10px] text-slate-500">Расчёт предварительный. Завершённые задачи не меняются. Изменения применятся при запуске/переходе к следующему шагу.</div>`;
       box.classList.remove('hidden');
+    }
+
+    function manualCompressWithPreview() {
+      const plan=buildDeadlinePlan(activeIdx>=0?activeIdx:0,getDeadlineBudgetSec(new Date()),activeIdx>=0);
+      const msg=plan.originalTotal<=getDeadlineBudgetSec(new Date()) ? 'Исходный план уже помещается в доступное время. Применять ужатие не требуется.' : `Будет перераспределено оставшееся время. Дефицит после минимальных норм: ${fmtSec(plan.deficit)}. Применить ручное ужатие к текущему кругу? Шаблон не изменится.`;
+      if(!confirm(msg)) return;
+      compressToDeadline(true);
     }
 
     function compressToDeadline(isManual=false, targetStartIdx=null) {
@@ -2103,7 +2141,7 @@
             </div>
             ${compressed ? `<div class="text-[10px] text-amber-300 mt-1">Исходно ${fmtSec(originalPlan)} · отклонение от исходного ${fmtSignedDiff(originalDiff)}</div>` : ''}
             ${j.totalWallSec ? `<div class="text-[10px] text-slate-400 mt-1">Полная длительность: ${fmtSec(j.totalWallSec)} · время по таймеру: ${fmtSec(actual)} · выполненные задачи: ${fmtSec(j.totalWorkActual ?? actual)} · до пропусков: ${fmtSec(j.totalSkippedTimeSec || 0)}</div>` : ''}
-            ${j.deadlineAt ? `<div class="text-[10px] ${Number(j.deadlineDeltaSec)<=0?'text-emerald-300':'text-rose-300'} mt-1">Дедлайн выхода с резервом ${Math.round((j.deadlineBufferSec||0)/60)} мин: ${Number(j.deadlineDeltaSec)<=0?'раньше на '+fmtSec(Math.abs(Number(j.deadlineDeltaSec)||0)):'опоздание '+fmtSec(Number(j.deadlineDeltaSec)||0)}</div>` : ''}
+            ${(j.deadlineAt && j.startedAt && j.deadlineAt>=j.startedAt-12*3600000 && j.deadlineAt<=j.startedAt+36*3600000 && Number.isFinite(Number(j.deadlineDeltaSec))) ? `<div class="text-[10px] ${Number(j.deadlineDeltaSec)<=0?'text-emerald-300':'text-rose-300'} mt-1">Дедлайн выхода с резервом ${Math.round((j.deadlineBufferSec||0)/60)} мин: ${Number(j.deadlineDeltaSec)<=0?'раньше на '+fmtSec(Math.abs(Number(j.deadlineDeltaSec)||0)):'опоздание '+fmtSec(Number(j.deadlineDeltaSec)||0)}</div>` : ''}
             <div class="text-[10px] text-sky-300 mt-1">Нажмите, чтобы раскрыть шаги</div>
           </summary>
           <div class="mt-2">${stepRows || '<div class="text-xs text-slate-500">Нет подробной статистики</div>'}</div>
@@ -2424,12 +2462,13 @@
         const dlEl = document.getElementById('deadlineDiff');
         if(useDl) {
           const diffMin = Math.round((getDeadlineDate(now) - forecast - Math.max(0,Number(document.getElementById('exitBufferMin')?.value)||0)*60000)/60000);
-          if(diffMin>=0) { dlEl.textContent = `Запас: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
-          else { dlEl.textContent = `Опоздание: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
+          if(activeIdx<0 || sessionStatus==='idle' || sessionStatus==='completed') { dlEl.textContent = diffMin>=0 ? `Прогноз: успеваешь на ${diffMin} мин` : `Прогноз: не хватает ${Math.abs(diffMin)} мин`; dlEl.style.color = diffMin>=0 ? '#4ade80' : '#fbbf24'; }
+          else if(diffMin>=0) { dlEl.textContent = `Прогноз запаса: ${diffMin} мин`; dlEl.style.color = '#4ade80'; }
+          else { dlEl.textContent = `Прогноз опоздания: ${Math.abs(diffMin)} мин`; dlEl.style.color = '#f87171'; }
         } else { dlEl.textContent = 'Свободный темп'; dlEl.style.color = '#94a3b8'; }
 
         const sb = document.getElementById('savedBank');
-        if (savedSec > 0) { sb.classList.remove('hidden'); sb.textContent = `В запасе: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
+        if (savedSec > 0 && activeIdx>=0 && activeIdx<tasks.length) { sb.classList.remove('hidden'); sb.textContent = `Сэкономлено на задачах: +${fmtSec(savedSec)}`; } else sb.classList.add('hidden');
 
         const bBadge = document.getElementById('keepAliveBadge');
         bBadge.innerHTML = (keepAliveActive && activeIdx>=0 && activeIdx<tasks.length) ? '<span>🔒 Экран удерживается (пока разрешено)</span>' : '<span>🔓 Фоновая защита браузера ограничена</span>';
@@ -2494,17 +2533,13 @@ function addConstructorTask() {
 // Восстановлено из стабильной версии: addSavedMinute
 function addSavedMinute() {
       if (activeIdx >= 0 && activeIdx < tasks.length) {
-        if (savedSec >= 60) {
-          savedSec -= 60;
-          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
-          showToast('⏱ +1 минута из запаса');
-        } else {
-          tasks[activeIdx].addedSec = (tasks[activeIdx].addedSec || 0) + 60;
-          showToast('⏱ +1 минута к текущему');
-        }
-        stepDurationSec = getStepTargetSec(activeIdx);
+        const t=tasks[activeIdx];
+        t.addedSec=(Number(t.addedSec)||0)+60;
+        if(savedSec>=60) savedSec-=60;
+        stepDurationSec=getStepTargetSec(activeIdx);
         saveSession(); render();
-      }
+        showToast('⏱ +1 минута добавлена только к текущему проходу. Шаблон и исходная норма не изменены.');
+      } else showToast('Запусти утреннюю цепочку, чтобы добавить минуту текущему делу');
     }
 
 // Восстановлено из стабильной версии: applySummaryToTemplate
@@ -2593,7 +2628,8 @@ function finishRoutine() {
       }
 
       saveSession();
-      renderSummaryCard(routineStats, { deadlineAt, deadlineBufferSec, deadlineDeltaSec });
+      renderSummaryCard(routineStats, { deadlineAt: (deadlineAt && deadlineAt>=startedAt-12*3600000 && deadlineAt<=startedAt+36*3600000) ? deadlineAt : 0, deadlineBufferSec, deadlineDeltaSec: (deadlineAt && deadlineAt>=startedAt-12*3600000 && deadlineAt<=startedAt+36*3600000) ? deadlineDeltaSec : null });
+      routineDeadlineAt=0;
       renderJournal();
       render();
       notify('Утренний Темп-Будильник', 'Отличная работа! Все ритуалы завершены 🎉');
