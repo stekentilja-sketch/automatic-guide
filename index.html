@@ -349,8 +349,8 @@
           </div>
           <div class="space-y-2 pt-1 border-t border-slate-800">
             <label class="flex items-center gap-2 font-semibold text-slate-300 text-xs cursor-pointer">
-              <input type="checkbox" id="factAutoNext" checked class="w-4 h-4 accent-sky-500 rounded" />
-              <span>Сигнал по окончании нормы (таймер продолжает считать)</span>
+              <input type="checkbox" id="factAutoNext" checked onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500 rounded" />
+              <span>Автозапуск следующей детали после «Готово»</span>
             </label>
           </div>
 
@@ -369,7 +369,7 @@
             <div id="factBatchProgress" class="h-full bg-sky-500 transition-all duration-300" style="width:0%"></div>
           </div>
           <div id="factUnitNormInfo" class="text-xs text-slate-400 tabular-nums"></div>
-          <div class="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-700/50 rounded-lg px-3 py-2">⏱ По окончании нормы таймер не переключается сам. Он продолжает учитывать фактическое время до твоего нажатия «Готово».</div>
+          <div class="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-700/50 rounded-lg px-3 py-2">⏱ Норма — ориентир и сигнал. Таймер продолжает считать перерасход, пока ты не нажмёшь «Готово».</div>
           <button type="button" onclick="undoFactoryLastCompletion()" id="factUndoBtn" class="w-full py-2 rounded-lg bg-indigo-950 border border-indigo-700 text-indigo-200 text-xs font-extrabold">↩ Отменить последнее «Готово»</button>
           <div id="factRecentHistory" class="space-y-1"></div>
         </div>
@@ -389,13 +389,11 @@
           <span id="factMainBtnSub" class="text-xs font-extrabold bg-black/15 text-emerald-950 px-3 py-1 rounded-full text-center">Двойной клик на наушниках (след. трек) или нажатие</span>
         </button>
 
-        <div class="grid grid-cols-3 gap-2 pt-2">
-          <button type="button" onclick="togglePause()" id="factPauseBtn"
-            class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 text-white text-sm font-bold">⏸</button>
-          <button type="button" onclick="addFactoryUnitMinute()"
-            class="row-btn py-3 px-1 rounded-xl border border-slate-600 bg-slate-800/90 text-emerald-300 text-sm font-bold">+1 мин</button>
-          <button type="button" onclick="confirmFactoryReset()"
-            class="row-btn py-3 px-1 rounded-xl border border-rose-500/40 bg-rose-950/70 text-rose-200 text-sm font-bold">↺</button>
+        <div class="grid grid-cols-2 gap-2 pt-2">
+          <button type="button" onclick="togglePause()" id="factPauseBtn" class="row-btn py-3 px-2 rounded-xl border border-slate-600 bg-slate-800/90 text-white text-sm font-bold">⏸ Пауза</button>
+          <button type="button" onclick="finishFactoryEarlier()" id="factEarlierBtn" class="row-btn py-3 px-2 rounded-xl border border-sky-500/40 bg-sky-950/70 text-sky-200 text-sm font-bold">↶ Закончил раньше</button>
+          <button type="button" onclick="addFactoryUnitMinute()" class="row-btn py-3 px-2 rounded-xl border border-slate-600 bg-slate-800/90 text-emerald-300 text-sm font-bold">＋ 1 мин к норме</button>
+          <button type="button" onclick="confirmFactoryReset()" class="row-btn py-3 px-2 rounded-xl border border-rose-500/40 bg-rose-950/70 text-rose-200 text-sm font-bold">↺ Сбросить</button>
         </div>
 
         <button type="button" onclick="skipFactoryUnit()" class="w-full py-2.5 rounded-xl border border-rose-500/40 bg-rose-950/70 text-rose-200 text-xs font-extrabold">✕ Брак / пропустить текущую деталь</button>
@@ -884,7 +882,7 @@
             album: 'Швейный поток'
           });
           navigator.mediaSession.setActionHandler('nexttrack', () => {
-            if (currentMode === 'factory' && factState.active && !factState.paused) {
+            if (currentMode === 'factory' && factState.active && !factState.paused && !factState.awaitingNext) {
               handleFactoryMainBtn();
             } else if (currentMode === 'morning' && activeIdx >= 0 && activeIdx < tasks.length) {
               handleMainBtn();
@@ -2922,7 +2920,7 @@ function stepSuggestionMin(idx, delta) {
 // Восстановлено из стабильной версии: togglePause
 function togglePause() {
       if (currentMode === 'factory') {
-        if (!factState.active) return;
+        if (!factState.active || factState.awaitingNext) return;
         factState.paused = !factState.paused;
         if (factState.paused) {
           factState.pauseStartedAt = Date.now();
@@ -3029,7 +3027,7 @@ function toggleSuggestion(idx, checked) {
       const now = Date.now();
       const totalUnits = operations.reduce((a,x)=>a+x.units,0);
       const totalMin = operations.reduce((a,x)=>a+x.totalMin,0);
-      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:false, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
+      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:(document.getElementById('factAutoNext')?.checked ?? true), awaitingNext:false, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
       document.getElementById('factorySummaryCard').classList.add('hidden');
       factWarned20 = false; factWarnedZero = false;
       persistFactory(); setupMediaSessionHandlers(); playBeep(700,0.09,1); renderFactoryUI();
@@ -3063,6 +3061,7 @@ function toggleSuggestion(idx, checked) {
     }
     function handleFactoryMainBtn() {
       if (!factState.active || factState.paused) return;
+      if (factState.awaitingNext) { const now=Date.now(); factState.awaitingNext=false; factState.currentUnitStartMs=now; factState.currentUnitElapsedSec=0; factState.totalPausedMs=0; factState.pauseStartedAt=0; persistFactory(); renderFactoryUI(); return; }
       const now = Date.now();
       const op = factState.operations?.[factState.operationIndex || 0];
       if (!op) { finishFactoryBatchEarly(true); return; }
@@ -3080,12 +3079,33 @@ function toggleSuggestion(idx, checked) {
         if (!nextOp) { finishFactoryBatchEarly(true); return; }
         factState.unitTargetSec = nextOp.unitTargetSec;
       }
-      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.paused = false; factState.overrunReminderShown=false;
+      factState.currentUnitStartMs = factState.autoNext ? now : 0; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.paused = false; factState.awaitingNext = !factState.autoNext; factState.overrunReminderShown=false;
       factWarned20 = false; factWarnedZero = false; persistFactory(); playBeep(720,0.07,1); renderFactoryUI();
     }
 
+    function finishFactoryEarlier() {
+      if (!factState.active || factState.paused || factState.awaitingNext) return;
+      const answer = prompt('На сколько минут раньше ты закончил эту деталь?\nВведи примерное число минут (например, 5). Замер будет помечен как приблизительный.', '5');
+      if (answer === null) return;
+      const mins = Number(String(answer).replace(',', '.'));
+      if (!Number.isFinite(mins) || mins <= 0 || mins > 1440) { showToast('Укажи минуты от 0,1 до 1440'); return; }
+      const now = Date.now();
+      const elapsed = Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0))/1000) - Math.round(mins*60);
+      if (elapsed < 1) { showToast('Получилось меньше секунды. Укажи меньшее время'); return; }
+      const oldStart = factState.currentUnitStartMs;
+      const oldPause = factState.totalPausedMs || 0;
+      factState.currentUnitStartMs = now - elapsed*1000 - oldPause;
+      handleFactoryMainBtn();
+      const last = factState.unitStats?.[factState.unitStats.length-1];
+      if (last) { last.corrected=true; last.approximate=true; last.correctedAt=Date.now(); last.endedAt=now-Math.round(mins*60000); last.startedAt=oldStart; last.actualSec=elapsed; }
+      const op = factState.operations?.find(x => (x.unitStats||[]).some(y => y.operation===last?.operation && y.unit===last?.unit));
+      const opStat = op?.unitStats?.find(y => y.operation===last?.operation && y.unit===last?.unit);
+      if (opStat && last) Object.assign(opStat,{actualSec:elapsed,corrected:true,approximate:true,correctedAt:last.correctedAt,endedAt:last.endedAt,startedAt:oldStart});
+      persistFactory(); renderFactoryUI(); showToast('Время приблизительно скорректировано; следующий шаг сохранён отдельно');
+    }
+
     function skipFactoryUnit() {
-      if (!factState.active || factState.paused) return;
+      if (!factState.active || factState.paused || factState.awaitingNext) return;
       const now = Date.now();
       const op = factState.operations?.[factState.operationIndex || 0];
       if (!op) return;
@@ -3100,7 +3120,7 @@ function toggleSuggestion(idx, checked) {
         if (!nextOp) { finishFactoryBatchEarly(true); return; }
         factState.unitTargetSec = nextOp.unitTargetSec;
       }
-      factState.currentUnitStartMs = now; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.overrunReminderShown=false;
+      factState.currentUnitStartMs = factState.autoNext ? now : 0; factState.currentUnitElapsedSec = 0; factState.totalPausedMs = 0; factState.pauseStartedAt = 0; factState.awaitingNext = !factState.autoNext; factState.overrunReminderShown=false;
       factWarned20 = false; factWarnedZero = false; persistFactory(); vibrate([50,35,50]); renderFactoryUI();
       showToast(`✕ Деталь ${unitNo} в операции «${op.name}» пропущена`);
     }
@@ -3149,7 +3169,7 @@ function toggleSuggestion(idx, checked) {
     }
 
     function addFactoryUnitMinute() {
-      if (!factState.active || factState.paused) return;
+      if (!factState.active || factState.paused || factState.awaitingNext) return;
       factState.unitTargetSec += 60;
       factState.totalMin = (Number(factState.totalMin) || 0) + 1;
       const op = factState.operations?.[factState.operationIndex || 0]; if (op) op.totalMin = (Number(op.totalMin) || 0) + 1;
@@ -3200,16 +3220,17 @@ function toggleSuggestion(idx, checked) {
         document.getElementById('factCurrentTaskName').textContent = currentOp?.name || factState.name;
         document.getElementById('factPauseBtn').textContent = factState.paused ? '▶' : '⏸';
         const factMain=document.getElementById('factMainBtn'); const factTitle=document.getElementById('factMainBtnTitle'); const factSub=document.getElementById('factMainBtnSub');
-        if(factMain&&factTitle){factTitle.textContent=factState.paused?'▶ ПРОДОЛЖИТЬ':'✓ ШТУКА ГОТОВА';factSub.textContent=factState.paused?'Продолжить текущую деталь':'Подтвердить готовность текущей детали';factMain.onclick=factState.paused?togglePause:handleFactoryMainBtn;}
-        const autoNextLive = document.getElementById('factAutoNextLive'); if (autoNextLive) autoNextLive.checked = false;
+        if(factMain&&factTitle){factTitle.textContent=factState.paused?'▶ ПРОДОЛЖИТЬ':(factState.awaitingNext?'▶ НАЧАТЬ СЛЕДУЮЩУЮ':'✓ ШТУКА ГОТОВА');factSub.textContent=factState.paused?'Продолжить текущую деталь':(factState.awaitingNext?'Запустить таймер следующей детали':'Завершить деталь и сохранить фактическое время');factMain.onclick=factState.paused?togglePause:handleFactoryMainBtn;}
+        const autoNextInput = document.getElementById('factAutoNext'); if (autoNextInput) autoNextInput.checked = factState.autoNext !== false;
         const undoBtn=document.getElementById('factUndoBtn'); if(undoBtn) undoBtn.disabled=!factState.undoLast;
+        ['factPauseBtn','factEarlierBtn'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!!factState.awaitingNext;});
         const recent=document.getElementById('factRecentHistory');
-        if(recent){const recentStats=(factState.unitStats||[]).slice(-5).reverse();recent.innerHTML=recentStats.length?'<div class="text-[10px] text-slate-400 font-bold pt-1">Последние завершённые детали · нажми, чтобы исправить время</div>'+recentStats.map(st=>{const ix=factState.unitStats.indexOf(st);return `<button type="button" onclick="editFactoryStat(${ix})" class="w-full text-left text-[11px] bg-slate-900/70 rounded-lg px-2.5 py-2 flex justify-between gap-2"><span>${esc(st.operation)} · №${st.unit}${st.suspicious?' · ⚠ проверь время':''}</span><b class="tabular-nums ${st.corrected?'text-sky-300':'text-slate-200'}">${fmtSec(st.actualSec)} ✎</b></button>`}).join(''):'<div class="text-[10px] text-slate-500">Завершённые детали появятся здесь. Их время можно будет исправить.</div>'; }
-        const elapsed = factState.paused
+        if(recent){const recentStats=(factState.unitStats||[]).slice(-5).reverse();recent.innerHTML=recentStats.length?'<div class="text-[10px] text-slate-400 font-bold pt-1">Последние завершённые детали · нажми, чтобы исправить время</div>'+recentStats.map(st=>{const ix=factState.unitStats.indexOf(st);return `<button type="button" onclick="editFactoryStat(${ix})" class="w-full text-left text-[11px] bg-slate-900/70 rounded-lg px-2.5 py-2 flex justify-between gap-2"><span>${esc(st.operation)} · №${st.unit}${st.suspicious?' · ⚠ проверь время':''}${st.approximate?' · ≈':''}</span><b class="tabular-nums ${st.corrected?'text-sky-300':'text-slate-200'}">${fmtSec(st.actualSec)} ✎</b></button>`}).join(''):'<div class="text-[10px] text-slate-500">Завершённые детали появятся здесь. Их время можно будет исправить.</div>'; }
+        const elapsed = factState.awaitingNext ? 0 : (factState.paused
           ? Math.floor((factState.pauseStartedAt - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000)
-          : Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
+          : Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
         const rem = factState.unitTargetSec - elapsed;
-        document.getElementById('factTimerDisplay').textContent = fmtSec(rem);
+        document.getElementById('factTimerDisplay').textContent = factState.awaitingNext ? 'ГОТОВО' : fmtSec(rem);
         document.getElementById('factStepProgressBar').style.width = `${Math.max(0, Math.min(100, rem / Math.max(1, factState.unitTargetSec) * 100))}%`;
         document.getElementById('factTimerDisplay').classList.toggle('text-rose-400', rem < 0);
         document.getElementById('factTimerDisplay').classList.toggle('text-white', rem >= 0);
@@ -3277,7 +3298,7 @@ function toggleSuggestion(idx, checked) {
             }
           }
         }
-      } else if (currentMode === 'factory' && factState.active && !factState.paused) {
+      } else if (currentMode === 'factory' && factState.active && !factState.paused && !factState.awaitingNext) {
         const factElapsedSec = Math.floor((Date.now() - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000);
         const rem = factState.unitTargetSec - factElapsedSec;
         const warnPoint = Math.max(1, Math.round(factState.unitTargetSec * 0.2));
@@ -3292,9 +3313,8 @@ function toggleSuggestion(idx, checked) {
           factWarnedZero = true;
           playBeep(500, 0.12, 3);
           vibrate([80, 40, 80]);
-          // По окончании нормы продолжаем учитывать перерасход на той же детали.
-          // Переход только после ручного подтверждения «Готово» или «Брак / пропуск».
-          if (factState.autoNext) { factState.autoNext = false; persistFactory(); const autoEl=document.getElementById('factAutoNextLive'); if(autoEl)autoEl.checked=false; }
+          // Норма только подаёт сигнал. Фактическое время продолжаем считать;
+          // настройка автозапуска следующей детали применяется после нажатия «Готово».
         }
       } else if (currentMode === 'work' && workData.activeTimer && workData.activeTimer.running && !workData.activeTimer.paused) {
         const timer=workData.activeTimer;
