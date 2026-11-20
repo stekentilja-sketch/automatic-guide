@@ -349,7 +349,7 @@
           </div>
           <div class="space-y-2 pt-1 border-t border-slate-800">
             <label class="flex items-center gap-2 font-semibold text-slate-300 text-xs cursor-pointer">
-              <input type="checkbox" id="factAutoNext" checked onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500 rounded" />
+              <input type="checkbox" id="factAutoNext" onchange="setFactoryAutoNext(this.checked)" class="w-4 h-4 accent-sky-500 rounded" />
               <span>Автозапуск следующей детали после «Готово»</span>
             </label>
           </div>
@@ -536,7 +536,7 @@
         return fallback;
       }
     }
-    const APP_BUILD_VERSION = '4.0.0';
+    const APP_BUILD_VERSION = '4.1.0';
     (function autoBackupBeforeUpgrade() {
       try {
         const previous = localStorage.getItem('m_app_build_version');
@@ -559,6 +559,15 @@
     if (!Array.isArray(customTemplates)) customTemplates = [];
     let journal = safeJsonParse(localStorage.getItem('m_journal'), []);
     if (!Array.isArray(journal)) journal = [];
+    // Миграция старого формата: deadlineDeltaSec ранее мог сохраняться в миллисекундах.
+    let journalMigrated = false;
+    journal.forEach(entry => {
+      if (entry && Number.isFinite(Number(entry.deadlineDeltaSec)) && Math.abs(Number(entry.deadlineDeltaSec)) > 172800) {
+        entry.deadlineDeltaSec = Math.round(Number(entry.deadlineDeltaSec) / 1000);
+        journalMigrated = true;
+      }
+    });
+    if (journalMigrated) { try { localStorage.setItem('m_journal', JSON.stringify(journal)); } catch(e) {} }
 
     if (customTemplates.length === 0 || !Array.isArray(customTemplates[0]?.tasks) || customTemplates[0].tasks.length === 0) {
       customTemplates = [{ id: Date.now(), name: 'Мой список (по умолч.)', tasks: JSON.parse(JSON.stringify(defaultTemplate)) }];
@@ -640,11 +649,11 @@
     // --- СОСТОЯНИЕ ЦЕХА ---
     let factState = safeJsonParse(localStorage.getItem('m_factory_session'), null) || {
       active: false, savedShift: false, name: '', totalMin: 0, totalUnits: 0,
-      doneUnits: 0, autoNext: true, startedAt: 0, currentUnitStartMs: 0,
+      doneUnits: 0, autoNext: false, startedAt: 0, currentUnitStartMs: 0,
       unitTargetSec: 0, unitStats: []
     };
 
-    factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0, operations:[], operationIndex:0, goodUnits:0, skippedUnits:0 }, factState);
+    factState = Object.assign({ active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:false, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0, operations:[], operationIndex:0, goodUnits:0, skippedUnits:0 }, factState);
     if (factState.goodUnits == null) factState.goodUnits = Number(factState.doneUnits) || 0;
     if (factState.skippedUnits == null) factState.skippedUnits = 0;
     function persistFactory() { try { localStorage.setItem('m_factory_session', JSON.stringify(factState)); scheduleAutoBackup(); } catch(e) { showToast('⚠️ Не удалось сохранить смену'); } }
@@ -652,7 +661,7 @@
       factState.operations = [{ name:factState.name || 'Операция', units:factState.totalUnits || 1, totalMin:factState.totalMin || 1, unitTargetSec:factState.unitTargetSec || 60, doneUnits:factState.doneUnits || 0, unitStats:factState.unitStats || [] }];
       factState.operationIndex = 0;
     }
-    factState.autoNext = false; // Норма никогда не завершает деталь автоматически.
+    // Не перезаписываем пользовательскую настройку автоперехода при загрузке.
     let factWarned20 = false, factWarnedZero = false;
 
     // ===================== РАБОТА PRO: ИЗДЕЛИЯ, ЗАКАЗЫ, ЕДИНЫЙ ТАЙМЕР =====================
@@ -743,10 +752,15 @@
       const order={id:workId('order'),templateId:tpl.id,templateName:tpl.name,name:document.getElementById('workOrderName').value.trim()||`${tpl.name} · ${new Date().toLocaleDateString('ru-RU')}`,createdAt:Date.now(),status:'active',plannedProductQty:qty,payMode:tpl.payMode,productPrice:tpl.productPrice,currency:tpl.currency||'₽',templateVersion:tpl.version||1,payments:[],operations:tpl.operations.map(op=>({id:workId('op'),templateOperationId:op.id,name:op.name,plannedQty:qty,doneQty:0,attempts:0,defectCount:0,normSec:op.normSec,rate:op.rate,actualSec:0,reworkSec:0,samples:[],defectEvents:[],timer:null,reworkPending:false}))};
       workData.orders.unshift(order); saveWorkData(); document.getElementById('workOrderName').value=''; renderWork(); showToast(`Заказ «${order.name}» создан`);
     }
+    let workCompleteActionAt = 0;
     function completeWorkUnit() {
+      const nowAction = Date.now();
+      if (nowAction - workCompleteActionAt < 800) return;
       const t=workData.activeTimer; if(!t){showToast('Сначала запусти таймер операции');return;}
       if(t.paused){showToast('Сначала продолжи таймер');return;}
       const op=workFindOperation(t.orderId,t.opId), order=workFindOrder(t.orderId); if(!op||!order)return;
+      if (!String(t.mode||'normal').startsWith('rework') && (op.doneQty||0) >= (op.plannedQty||1)) { showToast('Плановое количество этой операции уже выполнено'); return; }
+      workCompleteActionAt = nowAction;
       const now=Date.now(), elapsed=Math.max(1,Math.round(workTimerElapsed(t,now)));
       if(t.mode==='rework'||t.mode==='rework-late') {
         op.reworkSec=(op.reworkSec||0)+elapsed;
@@ -755,7 +769,8 @@
         op.samples.push({sec:elapsed,kind:'rework',at:now});
         const pending=(op.defectEvents||[]).find(e=>e.id===t.reworkEventId) || [...(op.defectEvents||[])].reverse().find(e=>(e.reworkedCount||0)<(e.count||1));
         if(pending){pending.reworkedCount=(pending.reworkedCount||0)+1;pending.reworkSec=(pending.reworkSec||0)+elapsed;pending.reworkedAt=now;}
-        const globalPending=workData.defectLog.find(e=>e.id===pending?.id); if(globalPending){globalPending.reworkedCount=(globalPending.reworkedCount||0)+1;globalPending.reworkSec=(globalPending.reworkSec||0)+elapsed;globalPending.reworkedAt=now;}
+        const globalPending=workData.defectLog.find(e=>e.id===pending?.id);
+        if(globalPending && globalPending!==pending){globalPending.reworkedCount=pending.reworkedCount;globalPending.reworkSec=pending.reworkSec;globalPending.reworkedAt=pending.reworkedAt;}
       } else { const kind=t.mode==='stopwatch'?'stopwatch':'normal'; const suspect=kind==='normal'&&Number(op.normSec)>0&&elapsed>Math.max(Number(op.normSec)*2,Number(op.normSec)+300); op.actualSec=(op.actualSec||0)+elapsed; op.doneQty=(op.doneQty||0)+1; op.attempts=(op.attempts||0)+1; op.samples.push({sec:elapsed,kind,at:now,suspect}); if(suspect)showToast('⚠️ Очень долгий замер сохранён, но исключён из расчёта нормы'); }
       op.timer=null; workData.activeTimer=null;
       const nextOp=order.operations.find(x=>(x.doneQty||0)<(x.plannedQty||1));
@@ -778,8 +793,12 @@
       const op=workFindOperation(orderId,opId); if(!op||!(op.pendingReworkCount>0||op.reworkPending))return;
       const event=[...(op.defectEvents||[])].reverse().find(e=>(e.reworkedCount||0)<(e.count||1));
       const mode=event?.kind==='late'?'rework-late':'rework';
-      op.timer=null; startWorkTimer(orderId,opId,mode);
-      if(workData.activeTimer){workData.activeTimer.reworkEventId=event?.id||null;saveWorkData();renderWork();}
+      const current=workData.activeTimer;
+      if(current && current.running && !current.paused) pauseWorkTimer(true);
+      else if(current && current.paused) { const old=workFindOperation(current.orderId,current.opId); if(old)old.timer={mode:current.mode,elapsedSec:Number(current.elapsedSec)||0,paused:true}; }
+      // Не стираем op.timer: там может лежать приостановленный обычный замер.
+      workData.activeTimer={orderId,opId,mode,running:true,paused:false,startedAt:Date.now(),elapsedSec:0,unitStartedAt:Date.now(),reworkEventId:event?.id||null};
+      saveWorkData(); renderWork(); showToast(`↻ Переделка: ${op.name}`);
     }
     function addHistoricalDefect(orderId,opId) {
       const op=workFindOperation(orderId,opId), order=workFindOrder(orderId); if(!op||!order)return;
@@ -869,7 +888,8 @@
       const nativeStorageRemove=Storage.prototype.removeItem;
       Storage.prototype.removeItem=function(key){nativeStorageRemove.call(this,key);if(this===window.localStorage&&String(key).startsWith('m_')&&typeof scheduleAutoBackup==='function')scheduleAutoBackup();};
     } catch(e) {}
-    window.addEventListener('pagehide',()=>{try{localStorage.setItem('m_work_data',JSON.stringify(workData));}catch(e){}});
+    let skipPagehideWorkSave = false;
+    window.addEventListener('pagehide',()=>{if(skipPagehideWorkSave)return;try{localStorage.setItem('m_work_data',JSON.stringify(workData));}catch(e){}});
 
 
     // --- ПЕРЕХВАТ НАУШНИКОВ ---
@@ -2590,7 +2610,7 @@ function finishRoutine() {
       const startedAt = routineStartedAt || (routineStats.find(s => s.startedAt)?.startedAt) || endedAt;
       const deadlineAt = routineDeadlineAt || 0;
       const deadlineBufferSec = Math.max(0, Number(document.getElementById('exitBufferMin')?.value) || 0) * 60;
-      const deadlineDeltaSec = deadlineAt ? endedAt - (deadlineAt - deadlineBufferSec * 1000) : null;
+      const deadlineDeltaSec = deadlineAt ? Math.round((endedAt - (deadlineAt - deadlineBufferSec * 1000)) / 1000) : null;
       let totalOriginalPlan = 0, totalPlan = 0, totalAct = 0, totalLiveAdj = 0;
       routineStats.forEach(s => {
         totalOriginalPlan += (s.plannedSec || 0);
@@ -3027,7 +3047,7 @@ function toggleSuggestion(idx, checked) {
       const now = Date.now();
       const totalUnits = operations.reduce((a,x)=>a+x.units,0);
       const totalMin = operations.reduce((a,x)=>a+x.totalMin,0);
-      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:(document.getElementById('factAutoNext')?.checked ?? true), awaitingNext:false, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
+      factState = { active:true, savedShift:false, name:operations.length===1?operations[0].name:'Партия: '+operations.length+' операций', operations, operationIndex:0, totalMin, totalUnits, doneUnits:0, goodUnits:0, skippedUnits:0, autoNext:(document.getElementById('factAutoNext')?.checked ?? false), awaitingNext:false, startedAt:now, currentUnitStartMs:now, currentUnitElapsedSec:0, unitTargetSec:operations[0].unitTargetSec, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
       document.getElementById('factorySummaryCard').classList.add('hidden');
       factWarned20 = false; factWarnedZero = false;
       persistFactory(); setupMediaSessionHandlers(); playBeep(700,0.09,1); renderFactoryUI();
@@ -3129,7 +3149,7 @@ function toggleSuggestion(idx, checked) {
       if (!factState.active && !factState.savedShift) return;
       const now = Date.now();
       const history = safeJsonParse(localStorage.getItem('m_factory_history'), []);
-      const currentElapsed = completedAll ? 0 : (factState.active && !factState.paused
+      const currentElapsed = (completedAll || factState.awaitingNext) ? 0 : (factState.active && !factState.paused
         ? Math.max(0, Math.floor((now - factState.currentUnitStartMs - (factState.totalPausedMs || 0))/1000))
         : Math.max(0, Number(factState.currentUnitElapsedSec) || 0));
       const record = {
@@ -3181,7 +3201,7 @@ function toggleSuggestion(idx, checked) {
       if (!factState.active && !factState.savedShift) return;
       if (!confirm('Сбросить текущую партию? Уже учтённые детали останутся в истории только после закрытия партии.')) return;
       factState.active = false; factState.paused = false; persistFactory();
-      factState = { active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:true, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
+      factState = { active:false, savedShift:false, name:'', totalMin:0, totalUnits:0, doneUnits:0, autoNext:false, startedAt:0, currentUnitStartMs:0, unitTargetSec:0, unitStats:[], paused:false, totalPausedMs:0, pauseStartedAt:0 };
       persistFactory(); renderFactoryUI(); showToast('↺ Партия сброшена');
     }
 
@@ -3189,7 +3209,7 @@ function toggleSuggestion(idx, checked) {
       if (!factState.active) return;
       const now = Date.now();
       const endPoint = factState.paused ? (factState.pauseStartedAt || now) : now;
-      factState.currentUnitElapsedSec = Math.max(0, Math.floor((endPoint - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
+      factState.currentUnitElapsedSec = factState.awaitingNext ? 0 : Math.max(0, Math.floor((endPoint - factState.currentUnitStartMs - (factState.totalPausedMs || 0)) / 1000));
       factState.savedShift = true; factState.active = false; factState.paused = true;
       factState.savedAt = now; persistFactory();
       showToast('💾 Смена сохранена на этом устройстве');
@@ -3199,7 +3219,7 @@ function toggleSuggestion(idx, checked) {
     function resumeFactoryShift() {
       if (!factState.savedShift || !factState.totalUnits) return;
       factState.active = true; factState.savedShift = false; factState.paused = false;
-      factState.currentUnitStartMs = Date.now() - Math.max(0, factState.currentUnitElapsedSec || 0) * 1000;
+      factState.currentUnitStartMs = factState.awaitingNext ? 0 : Date.now() - Math.max(0, factState.currentUnitElapsedSec || 0) * 1000;
       factState.totalPausedMs = 0; factState.pauseStartedAt = 0;
       factWarned20 = false; factWarnedZero = false; persistFactory(); renderFactoryUI();
     }
@@ -3346,6 +3366,7 @@ function toggleSuggestion(idx, checked) {
         localStorage.setItem('m_backup_before_auto_restore', JSON.stringify({ createdAt:Date.now(), values:current }));
         const restoreKeys = ['m_custom_templates','m_journal','m_active_session','m_active_tpl_idx','m_factory_session','m_factory_history','m_app_mode','m_deadline_time','m_deadline_date','m_exit_buffer_min','m_reduce_motion','m_auto_compress','m_use_deadline','m_silent_mode','m_auto_voice_win','m_notify','m_auto_skip_optional','m_work_data'];
         restoreKeys.forEach(k => { if (Object.prototype.hasOwnProperty.call(snap.values,k)) localStorage.setItem(k,snap.values[k]); else localStorage.removeItem(k); });
+        skipPagehideWorkSave = true;
         location.reload();
       } catch(e) { alert('Не удалось восстановить бэкап: хранилище недоступно или переполнено.'); }
     }
@@ -3361,7 +3382,10 @@ function toggleSuggestion(idx, checked) {
             if(!validEntries.length){alert('В резервной копии нет данных приложения.');return;}
             const before={createdAt:Date.now(),values:{}}; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('m_'))before.values[k]=localStorage.getItem(k);}
             localStorage.setItem('m_backup_before_import',JSON.stringify(before));
-            validEntries.forEach(([k,v])=>localStorage.setItem(k,v));
+            const rollback={}; validEntries.forEach(([k])=>{rollback[k]=localStorage.getItem(k);});
+            try { validEntries.forEach(([k,v])=>localStorage.setItem(k,v)); }
+            catch(writeErr) { Object.entries(rollback).forEach(([k,v])=>{try{if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){}}); throw writeErr; }
+            skipPagehideWorkSave = true;
             alert('Полная резервная копия восстановлена. Страница будет перезагружена.'); location.reload(); return;
           }
           const okTemplates = Array.isArray(data.templates) && data.templates.length > 0 && data.templates.every(t =>
@@ -3410,6 +3434,7 @@ function toggleSuggestion(idx, checked) {
             const settingKeys = { deadlineTime:'m_deadline_time', deadlineDate:'m_deadline_date', exitBufferMin:'m_exit_buffer_min', autoCompress:'m_auto_compress', useDeadline:'m_use_deadline', silentMode:'m_silent_mode', autoVoiceWindow:'m_auto_voice_win', notify:'m_notify', autoSkipOptional:'m_auto_skip_optional', reduceMotion:'m_reduce_motion' };
             Object.entries(settingKeys).forEach(([field,key]) => { if (data.settings[field] !== null && data.settings[field] !== undefined) localStorage.setItem(key,data.settings[field]); });
           }
+          skipPagehideWorkSave = true;
           alert('Импорт успешен! Страница будет перезагружена.');
           location.reload();
         } catch(err) { alert('Ошибка чтения файла!'); }
